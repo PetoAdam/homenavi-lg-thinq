@@ -12,6 +12,12 @@
       "path": "/ui/dashboard.html",
       "label": "LG ThinQ",
       "icon": "/assets/icon.png"
+    },
+    "setup": {
+      "enabled": true,
+      "path": "/ui/setup.html",
+      "label": "Setup",
+      "icon": "/assets/icon.png"
     }
   },
   "widgets": [
@@ -19,6 +25,7 @@
       "type": "integration.lg_thinq.overview",
       "display_name": "LG ThinQ Overview",
       "description": "Quick status for ThinQ appliances.",
+      "default_size_hint": "sm",
       "entry": { "kind": "iframe", "url": "/widgets/lg-overview/" },
       "requested_scopes": ["integration.lgthinq.read"]
     },
@@ -26,6 +33,7 @@
       "type": "integration.lg_thinq.device",
       "display_name": "LG ThinQ Device",
       "description": "Status and controls for a selected ThinQ device.",
+      "default_size_hint": "sm",
       "entry": { "kind": "iframe", "url": "/widgets/lg-device/" },
       "requested_scopes": ["integration.lgthinq.read"]
     }
