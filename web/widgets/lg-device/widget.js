@@ -40,16 +40,18 @@ const state = {
   // until after the next REST snapshot completes + a short grace period.
   realtimeSuppressUntil: 0,
   realtimeAwaitingRest: false,
+  commandLockUntil: 0,
+  commandLockDeviceId: '',
+  commandLockedFingerprint: '',
+  commandLastBaseline: '',
 };
 
 const REALTIME_RESUME_GRACE_MS = 1500;
 const COMMAND_DISABLE_MS = 2000;
+const COMMAND_ROLLBACK_LOCK_MS = 5000;
 
 let uiWakeTimer = null;
 let pendingClearTimer = null;
-
-let snapshotFallbackTimer = null;
-let snapshotFallbackInFlight = false;
 
 function getCookie(name) {
   const parts = (document.cookie || '').split(';').map((value) => value.trim());
@@ -64,11 +66,15 @@ function authHeaders() {
 }
 
 function suppressRealtimeUntilAfterNextRest() {
-  state.realtimeAwaitingRest = true;
-  state.realtimeSuppressUntil = Number.MAX_SAFE_INTEGER;
+  state.realtimeAwaitingRest = false;
+  state.realtimeSuppressUntil = Date.now() + REALTIME_RESUME_GRACE_MS;
   state.commandStableUntil = 0;
   state.commandObservedFingerprint = '';
   state.commandDisableUntil = 0;
+  state.commandLockUntil = 0;
+  state.commandLockDeviceId = '';
+  state.commandLockedFingerprint = '';
+  state.commandLastBaseline = '';
   if (pendingClearTimer) {
     clearTimeout(pendingClearTimer);
     pendingClearTimer = null;
@@ -90,6 +96,10 @@ function scheduleUIWakeAt(ts) {
 }
 
 function clearPendingState({ statusMessage = 'Updated.' } = {}) {
+  const pendingDeviceId = state.commandPendingDeviceId;
+  const baseline = state.commandBaseline;
+  const observed = state.commandObservedFingerprint;
+
   state.commandPendingUntil = 0;
   state.commandGraceUntil = 0;
   state.commandPendingDeviceId = '';
@@ -97,6 +107,19 @@ function clearPendingState({ statusMessage = 'Updated.' } = {}) {
   state.commandStableUntil = 0;
   state.commandObservedFingerprint = '';
   state.commandDisableUntil = 0;
+
+  if (pendingDeviceId && observed) {
+    state.commandLockUntil = Date.now() + COMMAND_ROLLBACK_LOCK_MS;
+    state.commandLockDeviceId = pendingDeviceId;
+    state.commandLockedFingerprint = observed;
+    state.commandLastBaseline = baseline || '';
+  } else {
+    state.commandLockUntil = 0;
+    state.commandLockDeviceId = '';
+    state.commandLockedFingerprint = '';
+    state.commandLastBaseline = '';
+  }
+
   if (pendingClearTimer) {
     clearTimeout(pendingClearTimer);
     pendingClearTimer = null;
@@ -125,9 +148,7 @@ function schedulePendingAutoClear(atTs) {
 }
 
 function resumeRealtimeAfterRestSnapshot() {
-  if (!state.realtimeAwaitingRest) return;
-  state.realtimeAwaitingRest = false;
-  state.realtimeSuppressUntil = Date.now() + REALTIME_RESUME_GRACE_MS;
+  // WS-only feedback mode.
 }
 
 function realtimeAllowed() {
@@ -146,30 +167,6 @@ function deviceStateFingerprint(device) {
     mappedJson = '';
   }
   return `${online}|${power}|${mappedJson}`;
-}
-
-function clearSnapshotFallback() {
-  if (!snapshotFallbackTimer) return;
-  clearTimeout(snapshotFallbackTimer);
-  snapshotFallbackTimer = null;
-}
-
-async function loadOnce() {
-  if (snapshotFallbackInFlight) return;
-  snapshotFallbackInFlight = true;
-  try {
-    await load();
-  } finally {
-    snapshotFallbackInFlight = false;
-  }
-}
-
-function scheduleSnapshotFallback(delayMs = 1200) {
-  if (snapshotFallbackTimer) return;
-  snapshotFallbackTimer = setTimeout(() => {
-    snapshotFallbackTimer = null;
-    void loadOnce();
-  }, Math.max(0, Number(delayMs) || 0));
 }
 
 function escapeHtml(value) {
@@ -554,6 +551,39 @@ async function sendCommand(deviceId, command, args) {
   }
 }
 
+function beginCommandPending(deviceId) {
+  const baseline = deviceStateFingerprint(state.devices?.[deviceId]);
+  suppressRealtimeUntilAfterNextRest();
+  state.commandPendingUntil = Date.now() + 9000;
+  state.commandGraceUntil = Date.now() + 1000;
+  state.commandPendingDeviceId = deviceId;
+  state.commandBaseline = baseline;
+  state.commandStableUntil = 0;
+  state.commandObservedFingerprint = '';
+  state.commandDisableUntil = Date.now() + COMMAND_DISABLE_MS;
+  scheduleUIWakeAt(state.commandDisableUntil + 20);
+}
+
+function cancelCommandPendingAfterFailure() {
+  state.commandPendingUntil = 0;
+  state.commandGraceUntil = 0;
+  state.commandPendingDeviceId = '';
+  state.commandBaseline = '';
+  state.commandStableUntil = 0;
+  state.commandObservedFingerprint = '';
+  state.commandDisableUntil = 0;
+  state.commandLockUntil = 0;
+  state.commandLockDeviceId = '';
+  state.commandLockedFingerprint = '';
+  state.commandLastBaseline = '';
+  state.realtimeAwaitingRest = false;
+  state.realtimeSuppressUntil = 0;
+  if (pendingClearTimer) {
+    clearTimeout(pendingClearTimer);
+    pendingClearTimer = null;
+  }
+}
+
 function attachControlHandlers() {
   if (!controlsEl) return;
 
@@ -563,23 +593,14 @@ function attachControlHandlers() {
       const target = String(btn.getAttribute('data-target') || '');
       try {
         setStatus(`Sending power=${target}…`, null);
+        beginCommandPending(deviceId);
         await sendCommand(deviceId, 'set_power', { power: target });
-        suppressRealtimeUntilAfterNextRest();
-        state.commandPendingUntil = Date.now() + 9000;
-        state.commandGraceUntil = Date.now() + 1000;
-        state.commandPendingDeviceId = deviceId;
-        state.commandBaseline = deviceStateFingerprint(state.devices[deviceId]);
-        state.commandStableUntil = 0;
-        state.commandObservedFingerprint = '';
-        state.commandDisableUntil = Date.now() + COMMAND_DISABLE_MS;
-        scheduleUIWakeAt(state.commandDisableUntil + 20);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
+        cancelCommandPendingAfterFailure();
         setStatus(err.message || 'Command failed.', false);
+        renderSelected();
       }
-      // WS-first: confirm via a one-shot snapshot, then resume WS after grace.
-      clearSnapshotFallback();
-      void loadOnce();
     });
   });
 
@@ -589,22 +610,14 @@ function attachControlHandlers() {
       const command = String(btn.getAttribute('data-command') || '');
       try {
         setStatus(`Sending ${command}…`, null);
+        beginCommandPending(deviceId);
         await sendCommand(deviceId, command, {});
-        suppressRealtimeUntilAfterNextRest();
-        state.commandPendingUntil = Date.now() + 9000;
-        state.commandGraceUntil = Date.now() + 1000;
-        state.commandPendingDeviceId = deviceId;
-        state.commandBaseline = deviceStateFingerprint(state.devices[deviceId]);
-        state.commandStableUntil = 0;
-        state.commandObservedFingerprint = '';
-        state.commandDisableUntil = Date.now() + COMMAND_DISABLE_MS;
-        scheduleUIWakeAt(state.commandDisableUntil + 20);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
+        cancelCommandPendingAfterFailure();
         setStatus(err.message || 'Command failed.', false);
+        renderSelected();
       }
-      clearSnapshotFallback();
-      void loadOnce();
     });
   });
 
@@ -617,22 +630,14 @@ function attachControlHandlers() {
       const args = prop ? { [prop]: value } : { value };
       try {
         setStatus(`Sending ${command}…`, null);
+        beginCommandPending(deviceId);
         await sendCommand(deviceId, command, args);
-        suppressRealtimeUntilAfterNextRest();
-        state.commandPendingUntil = Date.now() + 9000;
-        state.commandGraceUntil = Date.now() + 1000;
-        state.commandPendingDeviceId = deviceId;
-        state.commandBaseline = deviceStateFingerprint(state.devices[deviceId]);
-        state.commandStableUntil = 0;
-        state.commandObservedFingerprint = '';
-        state.commandDisableUntil = Date.now() + COMMAND_DISABLE_MS;
-        scheduleUIWakeAt(state.commandDisableUntil + 20);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
+        cancelCommandPendingAfterFailure();
         setStatus(err.message || 'Command failed.', false);
+        renderSelected();
       }
-      clearSnapshotFallback();
-      void loadOnce();
     });
   });
 
@@ -647,53 +652,16 @@ function attachControlHandlers() {
       const args = prop ? { [prop]: value } : { value };
       try {
         setStatus(`Sending ${command}…`, null);
+        beginCommandPending(deviceId);
         await sendCommand(deviceId, command, args);
-        suppressRealtimeUntilAfterNextRest();
-        state.commandPendingUntil = Date.now() + 9000;
-        state.commandGraceUntil = Date.now() + 1000;
-        state.commandPendingDeviceId = deviceId;
-        state.commandBaseline = deviceStateFingerprint(state.devices[deviceId]);
-        state.commandStableUntil = 0;
-        state.commandObservedFingerprint = '';
-        state.commandDisableUntil = Date.now() + COMMAND_DISABLE_MS;
-        scheduleUIWakeAt(state.commandDisableUntil + 20);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
+        cancelCommandPendingAfterFailure();
         setStatus(err.message || 'Command failed.', false);
+        renderSelected();
       }
-      clearSnapshotFallback();
-      void loadOnce();
     });
   });
-}
-
-async function load() {
-  try {
-    const res = await fetch(`${basePath}/api/realtime/snapshot`, { credentials: 'include', headers: authHeaders() });
-    if (!res.ok) {
-      const msg = res.status === 401 ? 'Sign in required for live state.' : `Snapshot unavailable (${res.status})`;
-      if (deviceSelectEl) deviceSelectEl.innerHTML = '';
-      if (controlsEl) controlsEl.innerHTML = '';
-      if (deviceTitleEl) deviceTitleEl.textContent = 'Unavailable';
-      if (deviceSubtitleEl) deviceSubtitleEl.textContent = msg;
-      if (deviceIconEl) deviceIconEl.innerHTML = iconHtml('plug', 'hn-icon');
-      if (statusIconsEl) statusIconsEl.innerHTML = '';
-      setStatus('Widget unavailable.', false);
-      return;
-    }
-
-    const payload = await res.json();
-    applySnapshot(payload);
-    // After a post-command REST snapshot completes, wait a short grace before accepting WS updates again.
-    resumeRealtimeAfterRestSnapshot();
-  } catch {
-    if (deviceTitleEl) deviceTitleEl.textContent = 'Unavailable';
-    if (deviceSubtitleEl) deviceSubtitleEl.textContent = 'Failed to load widget snapshot.';
-    if (deviceIconEl) deviceIconEl.innerHTML = iconHtml('plug', 'hn-icon');
-    if (statusIconsEl) statusIconsEl.innerHTML = '';
-    if (controlsEl) controlsEl.innerHTML = '';
-    setStatus('Failed to load snapshot.', false);
-  }
 }
 
 function applySnapshot(payload) {
@@ -703,6 +671,29 @@ function applySnapshot(payload) {
   if (rtInfoEl) rtInfoEl.style.display = 'none';
 
   const devices = payload?.devices || {};
+
+  const lockActive = Date.now() < (state.commandLockUntil || 0) && state.commandLockDeviceId;
+  if (lockActive) {
+    const lockId = state.commandLockDeviceId;
+    const incoming = devices?.[lockId];
+    const incomingFp = deviceStateFingerprint(incoming);
+    const prevDev = state.devices?.[lockId];
+    const prevFp = deviceStateFingerprint(prevDev);
+
+    if (prevDev && state.commandLockedFingerprint && prevFp === state.commandLockedFingerprint) {
+      if (!incoming) {
+        devices[lockId] = prevDev;
+      } else if (state.commandLastBaseline && incomingFp === state.commandLastBaseline) {
+        // Ignore delayed rollback to pre-command baseline for a short period.
+        devices[lockId] = prevDev;
+      }
+    }
+  } else if (state.commandLockUntil) {
+    state.commandLockUntil = 0;
+    state.commandLockDeviceId = '';
+    state.commandLockedFingerprint = '';
+    state.commandLastBaseline = '';
+  }
 
   // During a pending command, avoid applying snapshots that regress the pending device
   // back to the original baseline after we've already seen a post-command change.
@@ -715,9 +706,18 @@ function applySnapshot(payload) {
     const prevFp = deviceStateFingerprint(prevDev);
     const baseline = state.commandBaseline;
 
+    if (baseline && prevFp && prevFp !== baseline && !state.commandObservedFingerprint) {
+      state.commandObservedFingerprint = prevFp;
+    }
+
     if (baseline && incomingFp && incomingFp !== baseline) {
       // Record that we've seen a non-baseline snapshot for this command.
       state.commandObservedFingerprint = incomingFp;
+    }
+
+    if (baseline && incomingFp === baseline && prevDev && prevFp && prevFp !== baseline) {
+      // Avoid a quick rollback to baseline while a command is still pending.
+      devices[pendingId] = prevDev;
     }
 
     if (baseline && state.commandObservedFingerprint && incomingFp === baseline && prevDev) {
@@ -810,8 +810,6 @@ function connectWS() {
 
     ws.addEventListener('open', () => {
       wsConnected = true;
-      // If we connect but don't receive a message quickly, pull a snapshot once.
-      scheduleSnapshotFallback();
     });
 
     ws.addEventListener('message', (ev) => {
@@ -823,7 +821,6 @@ function connectWS() {
       }
       if (payload && typeof payload === 'object' && payload.devices) {
         wsHasMessage = true;
-        clearSnapshotFallback();
         if (!realtimeAllowed()) {
           return;
         }
@@ -833,19 +830,15 @@ function connectWS() {
 
     ws.addEventListener('close', () => {
       wsConnected = false;
-      // WS-first: snapshot only as fallback when disconnected.
-      scheduleSnapshotFallback(500);
       scheduleWSReconnect();
     });
 
     ws.addEventListener('error', () => {
       wsConnected = false;
-      scheduleSnapshotFallback(500);
       scheduleWSReconnect();
     });
   } catch {
     wsConnected = false;
-    scheduleSnapshotFallback(500);
     scheduleWSReconnect();
   }
 }
@@ -881,5 +874,3 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 connectWS();
-// WS-first: only load snapshot if WS doesn't deliver quickly.
-scheduleSnapshotFallback();
