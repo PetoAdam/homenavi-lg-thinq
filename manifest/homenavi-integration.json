@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "id": "lg-thinq",
+  "name": "LG ThinQ",
+  "version": "0.2.0",
+  "publisher": "Homenavi Community",
+  "homepage": "https://www.lg.com",
+  "verified": false,
+  "ui": {
+    "sidebar": {
+      "enabled": true,
+      "path": "/ui/dashboard.html",
+      "label": "LG ThinQ",
+      "icon": "/assets/icon.png"
+    },
+    "setup": {
+      "enabled": true,
+      "path": "/ui/setup.html",
+      "label": "Setup",
+      "icon": "/assets/icon.png"
+    }
+  },
+  "widgets": [
+    {
+      "type": "integration.lg_thinq.overview",
+      "display_name": "LG ThinQ Overview",
+      "description": "Quick status for ThinQ appliances.",
+      "default_size_hint": "sm",
+      "entry": { "kind": "iframe", "url": "/widgets/lg-overview/" },
+      "requested_scopes": ["integration.lgthinq.read"]
+    },
+    {
+      "type": "integration.lg_thinq.device",
+      "display_name": "LG ThinQ Device",
+      "description": "Status and controls for a selected ThinQ device.",
+      "default_size_hint": "sm",
+      "entry": { "kind": "iframe", "url": "/widgets/lg-device/" },
+      "requested_scopes": ["integration.lgthinq.read"]
+    }
+  ],
+  "device_extension": {
+    "enabled": true,
+    "provider_id": "lg-thinq",
+    "protocol": "lgthinq",
+    "discovery_mode": "sync",
+    "supports_pairing": false,
+    "capability_schema_url": "/.well-known/homenavi-capabilities.json"
+  },
+  "automation_extension": {
+    "enabled": true,
+    "scope": "integration_only",
+    "steps_catalog_url": "/.well-known/homenavi-automation-steps.json",
+    "execute_endpoint": "/api/automation/execute"
+  }
+}

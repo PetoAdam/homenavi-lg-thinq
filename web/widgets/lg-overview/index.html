@@ -1,0 +1,54 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LG ThinQ Widget</title>
+    <link rel="stylesheet" href="../../assets/homenavi.css" />
+    <script src="../../assets/icons.js" defer></script>
+    <style>
+      body { background: transparent; }
+      body::before { display: none; }
+      .hn-page { padding: 10px; }
+      .hn-card__body { padding: 12px; }
+      .hn-kpis { grid-template-columns: repeat(3, minmax(88px, 1fr)); margin-top: 10px; }
+      .hn-kpi {
+        padding: 8px 10px;
+        border-radius: 14px;
+      }
+      .hn-kpi__label { font-size: 0.68rem; margin-bottom: 4px; }
+      .hn-kpi__value { font-size: 0.95rem; }
+      .hn-device {
+        padding: 10px;
+        border-radius: 16px;
+      }
+      .hn-device__name { font-size: 0.92rem; }
+    </style>
+  </head>
+  <body>
+    <main class="hn-page">
+      <div class="hn-card__body">
+        <div class="hn-row" style="align-items:flex-start;">
+          <div class="hn-brand" style="gap:10px;">
+            <span class="hn-brand__icon" aria-hidden="true" style="width:32px;height:32px;border-radius:12px;">
+              <img src="../../assets/icon.png" alt="" />
+            </span>
+            <div class="hn-brand__title">
+              <div style="font-weight:900; letter-spacing:-0.01em;">Devices</div>
+              <div id="summary" class="hn-muted hn-small">Loading mapped devices…</div>
+            </div>
+          </div>
+        </div>
+
+          <div class="hn-kpis">
+            <div class="hn-kpi"><div class="hn-kpi__label">Devices</div><div id="statTotal" class="hn-kpi__value">-</div></div>
+            <div class="hn-kpi"><div class="hn-kpi__label">Online</div><div id="statOnline" class="hn-kpi__value">-</div></div>
+            <div class="hn-kpi"><div class="hn-kpi__label">Power On</div><div id="statPowerOn" class="hn-kpi__value">-</div></div>
+          </div>
+
+        <div id="devices" class="hn-list" style="margin-top:10px;"></div>
+      </div>
+    </main>
+    <script src="./widget.js" defer></script>
+  </body>
+</html>

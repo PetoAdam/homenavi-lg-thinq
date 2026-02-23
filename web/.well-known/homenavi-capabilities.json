@@ -1,0 +1,30 @@
+{
+  "provider": "lg-thinq",
+  "protocol": "lgthinq",
+  "capabilities": [
+    {
+      "id": "switch",
+      "description": "On/off control"
+    },
+    {
+      "id": "media.volume",
+      "description": "TV volume control"
+    },
+    {
+      "id": "media.input",
+      "description": "TV input source"
+    },
+    {
+      "id": "media.playback",
+      "description": "TV playback state and controls"
+    },
+    {
+      "id": "appliance.washer.status",
+      "description": "Washer state and progress"
+    },
+    {
+      "id": "appliance.washer.control",
+      "description": "Washer control actions"
+    }
+  ]
+}

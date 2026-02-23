@@ -1,0 +1,169 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LG ThinQ Setup</title>
+    <link rel="stylesheet" href="../assets/homenavi.css" />
+    <script src="../assets/icons.js" defer></script>
+  </head>
+  <body>
+    <main class="hn-page">
+      <div class="hn-shell">
+        <div class="hn-topbar">
+          <div class="hn-brand">
+            <a class="hn-brand__icon" href="./index.html" aria-label="LG ThinQ">
+              <img src="../assets/icon.png" alt="" />
+            </a>
+            <div class="hn-brand__title">
+              <h1>LG ThinQ Setup</h1>
+              <p>Configure API connectivity and verify PAT auth</p>
+            </div>
+          </div>
+          <span id="setupHealth" class="hn-pill"><span class="hn-dot" aria-hidden="true"></span><span>Health: loading…</span></span>
+        </div>
+
+        <div class="hn-grid">
+          <section class="hn-card">
+            <div class="hn-card__header">
+              <h2>User setup</h2>
+              <p>Paste your PAT, pick region/country, then verify.</p>
+            </div>
+            <div class="hn-card__body">
+              <p class="hn-muted hn-small" style="margin:0 0 12px;">Get a PAT at <a href="https://connect-pat.lgthinq.com" target="_blank" rel="noopener">connect-pat.lgthinq.com</a>, then paste it below.</p>
+
+              <div class="hn-form">
+                <label>
+                  <span class="hn-label">Region</span>
+                  <select id="accountRegion" class="hn-select">
+              <option value="eu">EU (EMEA)</option>
+              <option value="us">US (America)</option>
+              <option value="kr">KR (Asia Pacific)</option>
+              <option value="global">Global (fallback)</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span class="hn-label">Country (x-country)</span>
+                  <select id="country" class="hn-select">
+              <option value="">Loading countries…</option>
+                  </select>
+                </label>
+
+                <label class="hn-form__full">
+                  <span class="hn-label">PAT token</span>
+                  <input id="patToken" class="hn-input" type="password" placeholder="Paste token from connect-pat.lgthinq.com" autocomplete="new-password" />
+                </label>
+
+                <label class="hn-form__full">
+                  <span class="hn-label">ThinQ API base URL</span>
+                  <input id="apiBaseUrl" class="hn-input" placeholder="https://api-eic.lgthinq.com" autocomplete="off" />
+                </label>
+
+                <label class="hn-form__full">
+                  <span class="hn-label">API key (x-api-key)</span>
+                  <input id="apiKey" class="hn-input" autocomplete="off" />
+                </label>
+
+                <label>
+                  <span class="hn-label">Service phase (x-service-phase)</span>
+                  <input id="servicePhase" class="hn-input" placeholder="OP" autocomplete="off" />
+                </label>
+
+                <label>
+                  <span class="hn-label">Client ID (x-client-id)</span>
+                  <input id="clientId" class="hn-input" placeholder="homenavi-lg-thinq-client" autocomplete="off" />
+                </label>
+
+                <label>
+                  <span class="hn-label">Realtime updates</span>
+                  <select id="realtimeEnabled" class="hn-select">
+              <option value="true">Enabled</option>
+              <option value="false">Disabled</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span class="hn-label">Realtime transport</span>
+                  <select id="realtimeTransport" class="hn-select">
+              <option value="mqtt">MQTT</option>
+              <option value="ws">WebSocket</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span class="hn-label">Realtime reconnect (seconds)</span>
+                  <input id="realtimeReconnectSec" class="hn-input" type="number" min="5" max="600" value="30" />
+                </label>
+
+                <label>
+                  <span class="hn-label">PAT stored</span>
+                  <input id="hasPatToken" class="hn-input" value="Unknown" readonly />
+                </label>
+              </div>
+
+              <div class="hn-actions">
+                <button id="saveBtn" class="hn-btn hn-btn--primary" type="button">Save setup</button>
+                <button id="verifyBtn" class="hn-btn" type="button">Verify PAT</button>
+                <button id="verifyOnlyBtn" class="hn-btn" type="button">Verify stored PAT</button>
+                <button id="reloadBtn" class="hn-btn" type="button">Reload</button>
+                <button id="clearPatBtn" class="hn-btn" type="button">Clear PAT field</button>
+                <a href="./dashboard.html" class="hn-btn" id="openDashBtn">Open dashboard</a>
+              </div>
+
+              <div id="status" class="hn-alert hn-small hn-muted" style="margin-top:12px;">Loading setup…</div>
+            </div>
+          </section>
+
+          <aside class="hn-card">
+            <div class="hn-card__header">
+              <h2>Advanced tools</h2>
+              <p>Auth status and setup backups.</p>
+            </div>
+            <div class="hn-card__body">
+              <div class="hn-actions" style="margin-top:0;">
+                <button id="refreshAuthStatusBtn" class="hn-btn" type="button">Refresh auth status</button>
+                <button id="exportSetupBtn" class="hn-btn" type="button">Export setup JSON</button>
+                <button id="importSetupBtn" class="hn-btn" type="button">Import setup JSON</button>
+                <input id="importSetupFile" type="file" accept="application/json" style="display:none;" />
+              </div>
+
+              <div id="authStatus" class="hn-muted hn-small" style="margin-top:12px;">Auth status unavailable.</div>
+
+              <div id="setupMeta" style="margin-top:14px; display:grid; gap:10px;">
+                <div class="hn-row"><span class="hn-muted hn-small">Region</span><span id="metaRegion" class="hn-code">-</span></div>
+                <div class="hn-row"><span class="hn-muted hn-small">Base URL</span><span id="metaBase" class="hn-code" style="max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">-</span></div>
+                <div class="hn-row"><span class="hn-muted hn-small">Realtime</span><span id="metaRealtime" class="hn-code">-</span></div>
+                <div class="hn-row"><span class="hn-muted hn-small">PAT</span><span id="metaPat" class="hn-code">-</span></div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <script src="./app.js" defer></script>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        const { icon } = window.hnIcons || {};
+        if (!icon) return;
+        const map = [
+          ['saveBtn', 'settings'],
+          ['verifyBtn', 'bolt'],
+          ['verifyOnlyBtn', 'bolt'],
+          ['reloadBtn', 'refresh'],
+          ['refreshAuthStatusBtn', 'refresh'],
+          ['exportSetupBtn', 'list'],
+          ['importSetupBtn', 'list'],
+          ['openDashBtn', 'dashboard'],
+          ['clearPatBtn', 'settings'],
+        ];
+        map.forEach(([id, name]) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.insertAdjacentHTML('afterbegin', icon(name, 'hn-icon') + ' ');
+        });
+      });
+    </script>
+  </body>
+</html>

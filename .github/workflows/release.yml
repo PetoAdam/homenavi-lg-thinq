@@ -1,0 +1,53 @@
+name: Publish Docker Image
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require successful verify for this commit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.sha;
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner,
+              repo,
+              workflow_id: 'verify.yml',
+              event: 'push',
+              status: 'completed',
+              per_page: 100,
+            });
+
+            const ok = runs.some((run) => run.head_sha === sha && run.conclusion === 'success');
+            if (!ok) {
+              core.setFailed(`No successful verify.yml run found for commit ${sha}.`);
+            } else {
+              core.info(`Found successful verify.yml run for commit ${sha}.`);
+            }
+
+      - name: Homenavi release
+        uses: PetoAdam/homenavi/.github/actions/integration-release@main
+        with:
+          image_name: homenavi-lg-thinq
+          ghcr_username: ${{ github.actor }}
+          ghcr_token: ${{ secrets.GITHUB_TOKEN }}
+          manifest_path: manifest/homenavi-integration.json
+          metadata_path: marketplace/metadata.json
+          marketplace_api_url: https://marketplace.homenavi.org

@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LG ThinQ Dashboard</title>
+    <link rel="stylesheet" href="../assets/homenavi.css" />
+    <script src="../assets/icons.js" defer></script>
+  </head>
+  <body>
+    <main class="hn-page">
+      <div class="hn-shell">
+        <div class="hn-topbar">
+          <div class="hn-brand">
+            <a class="hn-brand__icon" href="./index.html" aria-label="LG ThinQ">
+              <img src="../assets/icon.png" alt="" />
+            </a>
+            <div class="hn-brand__title">
+              <h1>LG ThinQ Dashboard</h1>
+              <p>Live view of mapped ThinQ devices</p>
+            </div>
+          </div>
+          <span id="wsStatus" class="hn-pill"><span class="hn-dot" aria-hidden="true"></span><span>WS: connecting…</span></span>
+        </div>
+
+        <section class="hn-card" style="margin-bottom:16px;">
+          <div class="hn-card__body">
+            <div class="hn-row" style="margin-bottom:10px;">
+              <div id="setupSummary" class="hn-muted hn-small">Setup status loading…</div>
+              <div id="realtimeInfo" class="hn-muted hn-small">Realtime: unknown</div>
+            </div>
+
+            <div class="hn-kpis">
+              <div class="hn-kpi"><div class="hn-kpi__label">Devices</div><div id="statTotal" class="hn-kpi__value">-</div></div>
+              <div class="hn-kpi"><div class="hn-kpi__label">Online</div><div id="statOnline" class="hn-kpi__value">-</div></div>
+              <div class="hn-kpi"><div class="hn-kpi__label">Power On</div><div id="statPowerOn" class="hn-kpi__value">-</div></div>
+              <div class="hn-kpi"><div class="hn-kpi__label">Remote Off</div><div id="statRemoteOff" class="hn-kpi__value">-</div></div>
+              <div class="hn-kpi"><div class="hn-kpi__label">Last Sync</div><div id="lastSyncAt" class="hn-kpi__value">-</div></div>
+            </div>
+
+            <div class="hn-form" style="grid-template-columns: 1.2fr 1fr 1fr 1fr auto; align-items:end; margin-top:12px;">
+              <label class="hn-form__full" style="grid-column:auto;">
+                <span class="hn-label">Search</span>
+                <input id="searchInput" class="hn-input" placeholder="Search by name, type, or id" />
+              </label>
+              <label class="hn-form__full" style="grid-column:auto;">
+                <span class="hn-label">Connectivity</span>
+                <select id="filterOnline" class="hn-select">
+          <option value="all">All connectivity</option>
+          <option value="online">Online only</option>
+          <option value="offline">Offline only</option>
+                </select>
+              </label>
+              <label class="hn-form__full" style="grid-column:auto;">
+                <span class="hn-label">Power</span>
+                <select id="filterPower" class="hn-select">
+          <option value="all">Any power</option>
+          <option value="on">Power ON</option>
+          <option value="off">Power OFF</option>
+          <option value="unknown">No power state</option>
+                </select>
+              </label>
+              <label class="hn-form__full" style="grid-column:auto;">
+                <span class="hn-label">Sort</span>
+                <select id="sortBy" class="hn-select">
+          <option value="name">Sort by name</option>
+          <option value="online">Sort by online status</option>
+          <option value="updated">Sort by last seen</option>
+                </select>
+              </label>
+              <button id="compactModeBtn" class="hn-btn" type="button" style="height:42px;">Compact: Off</button>
+            </div>
+
+            <div class="hn-actions" style="margin-top:12px;">
+              <button id="syncBtn" class="hn-btn hn-btn--primary" type="button">Trigger sync now</button>
+              <button id="reloadBtn" class="hn-btn" type="button">Reload snapshot</button>
+              <button id="bulkOnBtn" class="hn-btn" type="button">Power ON filtered</button>
+              <button id="bulkOffBtn" class="hn-btn" type="button">Power OFF filtered</button>
+              <a href="./setup.html" class="hn-btn" id="openSetupBtn">Open setup</a>
+            </div>
+
+            <div id="status" class="hn-alert hn-small hn-muted" style="margin-top:12px;">Loading dashboard…</div>
+          </div>
+        </section>
+
+        <div class="hn-grid" style="grid-template-columns: 1.9fr 1fr;">
+          <section class="hn-card">
+            <div class="hn-card__header">
+              <h2>Mapped devices</h2>
+              <p>Controls show when supported by the device.</p>
+            </div>
+            <div class="hn-card__body">
+              <div id="deviceList" class="hn-list"></div>
+            </div>
+          </section>
+
+          <aside class="hn-card">
+            <div class="hn-card__header">
+              <h2>Event stream</h2>
+              <p>Recent events from the integration.</p>
+            </div>
+            <div class="hn-card__body">
+              <div id="events" style="max-height:560px; overflow:auto; font-size:0.82rem; line-height:1.4; border-radius:var(--radius-md); border:1px solid var(--color-glass-border-xlight); background: var(--color-surface-panel-muted); padding:10px;"></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </main>
+
+    <script src="./app.js" defer></script>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        const { icon } = window.hnIcons || {};
+        if (!icon) return;
+        const map = [
+          ['syncBtn', 'refresh'],
+          ['reloadBtn', 'refresh'],
+          ['bulkOnBtn', 'power'],
+          ['bulkOffBtn', 'power'],
+          ['compactModeBtn', 'list'],
+          ['openSetupBtn', 'settings'],
+        ];
+        map.forEach(([id, name]) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.insertAdjacentHTML('afterbegin', icon(name, 'hn-icon') + ' ');
+        });
+      });
+    </script>
+  </body>
+</html>

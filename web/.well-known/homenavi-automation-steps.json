@@ -1,0 +1,46 @@
+{
+  "actions": [
+    {
+      "kind": "integration.lgthinq.sync_now",
+      "display_name": "LG ThinQ: Sync devices now",
+      "description": "Trigger immediate cloud sync/import refresh.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    {
+      "kind": "integration.lgthinq.account_reconnect",
+      "display_name": "LG ThinQ: Reconnect account",
+      "description": "Force account/session refresh before the next poll.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "force": { "type": "boolean" }
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "kind": "integration.lgthinq.sync_completed",
+      "display_name": "LG ThinQ: Sync completed",
+      "description": "Fires when a sync round finishes.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "imported": { "type": "integer" }
+        }
+      }
+    }
+  ],
+  "conditions": [
+    {
+      "kind": "integration.lgthinq.account_connected",
+      "display_name": "LG ThinQ: Account connected",
+      "description": "Checks if integration account session is healthy."
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LG ThinQ Device</title>
+    <link rel="stylesheet" href="../../assets/homenavi.css" />
+    <script src="../../assets/icons.js" defer></script>
+    <style>
+      body { background: transparent; }
+      body::before { display: none; }
+      .hn-page { padding: 0; }
+      .lgw-root { padding: 10px; }
+      .lgw-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: default;
+        user-select: none;
+      }
+      .lgw-head:focus { outline: none; }
+      .lgw-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+        background: var(--color-surface-panel-muted);
+        border: 1px solid var(--color-glass-border-xlight);
+      }
+      .lgw-icon svg { width: 34px; height: 34px; }
+      .lgw-title { font-weight: 900; letter-spacing: -0.01em; line-height: 1.1; }
+      .lgw-sub { margin-top: 2px; }
+      .lgw-pick {
+        cursor: pointer;
+      }
+      .lgw-pick:hover {
+        text-decoration: underline;
+      }
+      .lgw-right {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .lgw-mark {
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        opacity: 0.85;
+      }
+      .lgw-menu {
+        margin-top: 10px;
+      }
+      .lgw-status {
+        margin-top: 10px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .lgw-sicon {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        border: 1px solid var(--color-glass-border-xlight);
+        background: var(--color-surface-panel-muted);
+        display: grid;
+        place-items: center;
+        position: relative;
+      }
+      .lgw-sicon svg { width: 18px; height: 18px; }
+      .lgw-sicon--ok { color: var(--color-text-success); }
+      .lgw-sicon--err { color: var(--color-text-danger); }
+      .lgw-badge {
+        position: absolute;
+        right: -6px;
+        top: -6px;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 6px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        font-size: 0.72rem;
+        font-weight: 800;
+        border: 1px solid var(--color-glass-border-xlight);
+        background: var(--color-surface-panel);
+        color: var(--color-text);
+      }
+      .lgw-controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .lgw-btn {
+        padding: 10px;
+        border-radius: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        min-width: 44px;
+        min-height: 44px;
+      }
+      .lgw-btn svg { width: 20px; height: 20px; }
+      .lgw-slider {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--color-glass-border-xlight);
+        background: var(--color-surface-panel-muted);
+      }
+      .lgw-slider input[type="range"] { width: 140px; }
+
+      .lgw-section {
+        margin-top: 12px;
+      }
+      .lgw-section-title {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        opacity: 0.7;
+        margin-bottom: 8px;
+      }
+      .lgw-state {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .lgw-kv {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: var(--color-surface-panel-muted);
+        border: 1px solid var(--color-glass-border-xlight);
+      }
+      .lgw-kv.lgw-kv--pending { opacity: 0.6; }
+      .lgw-k { font-weight: 800; }
+      .lgw-v { font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <main class="hn-page">
+      <div class="lgw-root" id="widgetCard">
+        <div class="lgw-head" aria-label="Widget header">
+          <div id="deviceIcon" class="lgw-icon" aria-hidden="true"></div>
+          <div style="min-width:0;">
+            <div id="deviceTitle" class="lgw-title lgw-pick" tabindex="0" role="button" aria-label="Select device">Loading…</div>
+            <div id="deviceSubtitle" class="lgw-sub hn-muted hn-small lgw-pick" tabindex="0" role="button" aria-label="Select device">Loading mapped devices…</div>
+          </div>
+          <div class="lgw-right">
+            <img class="lgw-mark" src="../../assets/icon.png" alt="" aria-hidden="true" />
+          </div>
+        </div>
+
+        <div id="deviceMenu" class="lgw-menu" style="display:none;">
+          <select id="deviceSelect" class="hn-select" aria-label="Select mapped device"></select>
+        </div>
+
+        <div id="statusIcons" class="lgw-status" aria-label="Device status"></div>
+
+        <div class="lgw-section" aria-label="Controls section">
+          <div class="lgw-section-title">Controls</div>
+          <div id="controls" class="lgw-controls" aria-label="Device controls"></div>
+        </div>
+
+        <div class="lgw-section" aria-label="State section">
+          <div class="lgw-section-title">State</div>
+          <div id="stateValues" class="lgw-state" aria-label="Device state"></div>
+        </div>
+
+        <div id="status" class="hn-alert hn-small hn-muted" style="margin-top:10px; display:none;">Ready.</div>
+      </div>
+    </main>
+
+    <script src="./widget.js" defer></script>
+  </body>
+</html>

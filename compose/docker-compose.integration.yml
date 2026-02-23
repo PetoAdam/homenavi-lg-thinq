@@ -1,0 +1,27 @@
+services:
+  lg-thinq:
+    image: ghcr.io/petoadam/homenavi-lg-thinq:${HN_VERSION:-latest}
+    pull_policy: if_not_present
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: lg-thinq
+    restart: unless-stopped
+    environment:
+      - PORT=8099
+      - JWT_PUBLIC_KEY_PATH=/keys/jwt_public.pem
+      - MQTT_BROKER_URL=${MQTT_BROKER_URL:-mqtt://mosquitto:1883}
+      - LG_THINQ_SETUP_PATH=/app/secrets
+      - LG_THINQ_ACCOUNT_EMAIL=${LG_THINQ_ACCOUNT_EMAIL:-}
+      - LG_THINQ_ACCOUNT_REGION=${LG_THINQ_ACCOUNT_REGION:-}
+      - LG_THINQ_API_BASE_URL=${LG_THINQ_API_BASE_URL:-https://api.smartthinq.com}
+    volumes:
+      - ${INTEGRATIONS_ROOT:?set INTEGRATIONS_ROOT}/integrations/secrets:/app/secrets
+      - ${INTEGRATIONS_ROOT:?set INTEGRATIONS_ROOT}/keys/jwt_public.pem:/keys/jwt_public.pem:ro
+    networks:
+      - homenavi-network
+
+networks:
+  homenavi-network:
+    external: true
+    name: homenavi-network

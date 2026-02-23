@@ -1,0 +1,58 @@
+name: Verify Integration
+
+on:
+  push:
+    branches: ["**"]
+    tags:
+      - "v*"
+  pull_request:
+    branches: ["main"]
+  workflow_call:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ./go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Homenavi verify
+        uses: PetoAdam/homenavi/.github/actions/integration-verify@main
+        with:
+          manifest_path: manifest/homenavi-integration.json
+
+      - name: gosec
+        uses: securego/gosec@v2.22.0
+        with:
+          args: ./...
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: homenavi-lg-thinq:latest
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: homenavi-lg-thinq:latest
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

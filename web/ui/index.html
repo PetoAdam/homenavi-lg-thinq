@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LG ThinQ</title>
+    <link rel="stylesheet" href="../assets/homenavi.css" />
+    <script src="../assets/icons.js" defer></script>
+  </head>
+  <body>
+    <main class="hn-page" style="display:grid;place-items:center;">
+      <div class="hn-shell" style="width:100%;max-width:640px;">
+        <div class="hn-card">
+          <div class="hn-card__header">
+            <div class="hn-brand" style="margin:0;">
+              <div class="hn-brand__icon" aria-hidden="true">
+                <img src="../assets/icon.png" alt="" />
+              </div>
+              <div class="hn-brand__title">
+                <h1>LG ThinQ</h1>
+                <p>Integration dashboard and setup</p>
+              </div>
+            </div>
+          </div>
+          <div class="hn-card__body">
+            <div class="hn-muted hn-small" style="margin-bottom:12px;">Choose what you want to open.</div>
+            <div class="hn-actions" style="margin-top:0;">
+              <a class="hn-btn hn-btn--primary" href="./dashboard.html" id="openDash">Open dashboard</a>
+              <a class="hn-btn" href="./setup.html" id="openSetup">Open setup</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <script>
+      // Add icons progressively.
+      window.addEventListener('DOMContentLoaded', () => {
+        const { icon } = window.hnIcons || {};
+        if (!icon) return;
+        const dash = document.getElementById('openDash');
+        const setup = document.getElementById('openSetup');
+        if (dash) dash.insertAdjacentHTML('afterbegin', icon('dashboard', 'hn-icon hn-icon--lg') + ' ');
+        if (setup) setup.insertAdjacentHTML('afterbegin', icon('settings', 'hn-icon hn-icon--lg') + ' ');
+      });
+    </script>
+  </body>
+</html>
