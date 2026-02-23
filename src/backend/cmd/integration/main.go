@@ -956,7 +956,11 @@ func newMQTTClient(broker string) (mqtt.Client, error) {
 		opts.SetPassword(pw)
 	}
 	if u != nil && (u.Scheme == "ssl" || u.Scheme == "tls" || u.Scheme == "wss") {
-		opts.SetTLSConfig(&tls.Config{InsecureSkipVerify: true})
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+		if host := u.Hostname(); strings.TrimSpace(host) != "" {
+			tlsConfig.ServerName = host
+		}
+		opts.SetTLSConfig(tlsConfig)
 	}
 	cli := mqtt.NewClient(opts)
 	tok := cli.Connect()
@@ -1788,7 +1792,7 @@ func main() {
 
 	addr := ":" + port
 	logInfof("homenavi-lg-thinq listening on %s log_level=%s", addr, firstNonEmpty(lgThinQLogLevel, "info"))
-	httpSrv := &http.Server{Addr: addr, Handler: accessLog(securityHeaders(mux))}
+	httpSrv := &http.Server{Addr: addr, Handler: accessLog(securityHeaders(mux)), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
