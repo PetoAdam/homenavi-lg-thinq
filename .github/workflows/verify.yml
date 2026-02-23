@@ -35,9 +35,10 @@ jobs:
           manifest_path: manifest/homenavi-integration.json
 
       - name: gosec
-        uses: securego/gosec@v2.22.0
-        with:
-          args: ./...
+        run: |
+          set -euo pipefail
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.0
+          "$(go env GOPATH)/bin/gosec" ./...
 
       - name: Build Docker image
         uses: docker/build-push-action@v5
