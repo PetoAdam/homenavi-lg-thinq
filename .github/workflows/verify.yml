@@ -45,9 +45,13 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: false
+          load: true
           tags: homenavi-lg-thinq:latest
-          outputs: type=docker,dest=/tmp/homenavi-lg-thinq.tar
+
+      - name: Export Docker image archive
+        run: |
+          set -euo pipefail
+          docker save homenavi-lg-thinq:latest -o /tmp/homenavi-lg-thinq.tar
 
       - name: Trivy image scan
         run: |
