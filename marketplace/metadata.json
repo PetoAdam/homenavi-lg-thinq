@@ -1,7 +1,7 @@
 {
   "id": "lg-thinq",
   "name": "LG ThinQ",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "LG ThinQ integration for Homenavi with TV/washer device sync and integration automation extras.",
   "listen_path": "/integrations/lg-thinq",
   "publisher": "Homenavi Community",
@@ -9,9 +9,6 @@
   "deployment_artifacts": {
     "compose": {
       "file": "compose/docker-compose.integration.yml"
-    },
-    "helm": {
-      "chart_ref": "oci://ghcr.io/petoadam/homenavi-lg-thinq"
     }
   },
   "image": "ghcr.io/petoadam/homenavi-lg-thinq",

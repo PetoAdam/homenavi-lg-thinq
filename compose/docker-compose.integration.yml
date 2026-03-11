@@ -1,11 +1,7 @@
 services:
   lg-thinq:
     image: ghcr.io/petoadam/homenavi-lg-thinq:${HN_VERSION:-latest}
-    pull_policy: if_not_present
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: lg-thinq
+    pull_policy: always
     restart: unless-stopped
     environment:
       - PORT=8099
