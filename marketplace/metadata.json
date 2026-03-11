@@ -1,7 +1,7 @@
 {
   "id": "lg-thinq",
   "name": "LG ThinQ",
-  "version": "0.0.0",
+  "version": "0.2.0",
   "description": "LG ThinQ integration for Homenavi with TV/washer device sync and integration automation extras.",
   "listen_path": "/integrations/lg-thinq",
   "publisher": "Homenavi Community",
