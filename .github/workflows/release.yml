@@ -43,7 +43,7 @@ jobs:
             }
 
       - name: Homenavi release
-        uses: PetoAdam/homenavi/.github/actions/integration-release@main
+        uses: PetoAdam/homenavi/.github/actions/integration-release@feature/helm_support
         with:
           image_name: homenavi-lg-thinq
           ghcr_username: ${{ github.actor }}
