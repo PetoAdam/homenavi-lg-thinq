@@ -81,6 +81,13 @@ After installation via Homenavi admin marketplace, open the installed integratio
 - `GET /api/realtime/snapshot` (resident)
 - `POST /api/automation/execute` (internal automation execution; no JWT)
 
+## Runtime behavior (default)
+
+- Device updates are primarily event-driven through MQTT/WS paths.
+- REST sync is not triggered automatically by realtime events or device commands.
+- Backend cloud sync runs periodically using `sync_interval_sec` (default: 180 seconds).
+- `POST /api/admin/sync-now` remains available as an on-demand fallback.
+
 ## Security
 
 - JWT auth via `JWT_PUBLIC_KEY_PATH`.

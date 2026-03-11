@@ -224,18 +224,10 @@ func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT m
 		})
 	}
 
+	_ = syncNow
 	b.mu.Lock()
-	canPulse := time.Since(b.lastSyncPulse) >= 5*time.Second
-	if canPulse {
-		b.lastSyncPulse = time.Now()
-	}
+	b.lastSyncPulse = time.Now()
 	b.mu.Unlock()
-	if canPulse {
-		select {
-		case syncNow <- struct{}{}:
-		default:
-		}
-	}
 }
 
 func (b *thinQRealtimeBridge) fetchRoute(ctx context.Context, cfg setupConfig) (thinQRouteInfo, error) {

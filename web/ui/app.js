@@ -452,38 +452,6 @@ function buildDeviceHTML(id, device) {
 function attachDeviceActionHandlers() {
   if (!elements.deviceList) return;
 
-  let refreshBurstTimer = null;
-  let refreshBurstRemaining = 0;
-  let refreshBurstInFlight = false;
-
-  const startRefreshBurst = ({ attempts = 6, intervalMs = 900 } = {}) => {
-    refreshBurstRemaining = Math.max(refreshBurstRemaining, Math.max(1, Number(attempts) || 1));
-    if (refreshBurstTimer) return;
-
-    const tick = async () => {
-      if (refreshBurstInFlight) return;
-      if (refreshBurstRemaining <= 0) {
-        clearInterval(refreshBurstTimer);
-        refreshBurstTimer = null;
-        return;
-      }
-      refreshBurstInFlight = true;
-      try {
-        await loadSnapshot();
-      } finally {
-        refreshBurstRemaining -= 1;
-        refreshBurstInFlight = false;
-        if (refreshBurstRemaining <= 0 && refreshBurstTimer) {
-          clearInterval(refreshBurstTimer);
-          refreshBurstTimer = null;
-        }
-      }
-    };
-
-    void tick();
-    refreshBurstTimer = setInterval(tick, intervalMs);
-  };
-
   elements.deviceList.querySelectorAll('.power-toggle').forEach((toggle) => {
     toggle.addEventListener('change', async () => {
       const deviceId = String(toggle.getAttribute('data-device-id') || '');
@@ -492,11 +460,9 @@ function attachDeviceActionHandlers() {
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command: 'set_power', args: { power: target } }) });
         setStatus(`Command sent: ${deviceLabel(deviceId)} power=${target}`, true);
-        startRefreshBurst();
       } catch (err) {
         toggle.checked = previous;
         setStatus(`Command failed: ${err.message}`, false);
-        startRefreshBurst({ attempts: 2, intervalMs: 1200 });
       }
     });
   });
@@ -508,10 +474,8 @@ function attachDeviceActionHandlers() {
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args: {} }) });
         setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}`, true);
-        startRefreshBurst();
       } catch (err) {
         setStatus(`Command failed: ${err.message}`, false);
-        startRefreshBurst({ attempts: 2, intervalMs: 1200 });
       }
     });
   });
@@ -526,10 +490,8 @@ function attachDeviceActionHandlers() {
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args }) });
         setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}=${value}`, true);
-        startRefreshBurst();
       } catch (err) {
         setStatus(`Command failed: ${err.message}`, false);
-        startRefreshBurst({ attempts: 2, intervalMs: 1200 });
       }
     });
   });

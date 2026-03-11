@@ -14,7 +14,7 @@
     {
       "kind": "integration.lgthinq.account_reconnect",
       "display_name": "LG ThinQ: Reconnect account",
-      "description": "Force account/session refresh before the next poll.",
+      "description": "Force account/session refresh for subsequent commands/events.",
       "input_schema": {
         "type": "object",
         "properties": {

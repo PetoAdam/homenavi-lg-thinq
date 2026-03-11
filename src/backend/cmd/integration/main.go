@@ -970,6 +970,31 @@ func newMQTTClient(broker string) (mqtt.Client, error) {
 	return cli, nil
 }
 
+func newMQTTClientWithRetry(broker string, maxWait time.Duration, retryEvery time.Duration) (mqtt.Client, error) {
+	if maxWait <= 0 {
+		return newMQTTClient(broker)
+	}
+	if retryEvery <= 0 {
+		retryEvery = 3 * time.Second
+	}
+
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+	for {
+		cli, err := newMQTTClient(broker)
+		if err == nil {
+			return cli, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			break
+		}
+		logWarnf("mqtt connect failed; retrying in %s err=%v", retryEvery.String(), err)
+		time.Sleep(retryEvery)
+	}
+	return nil, lastErr
+}
+
 func publishJSON(cli mqtt.Client, topic string, retain bool, payload map[string]any) {
 	if cli == nil {
 		return
@@ -1051,7 +1076,7 @@ func runSync(ctx context.Context, setup *setupStore, provider thinqProvider, sto
 }
 
 func startRefreshLoop(ctx context.Context, setup *setupStore, provider thinqProvider, cli mqtt.Client, store *bridgeStore, syncNow <-chan struct{}, hub *wsHub, gate *commandStateGate) {
-	logInfof("refresh loop started mode=realtime provider=%s mqtt_enabled=%t", provider.Name(), cli != nil)
+	logInfof("refresh loop started mode=periodic provider=%s mqtt_enabled=%t", provider.Name(), cli != nil)
 	handleSync := func(source string) {
 		logDebugf("refresh trigger source=%s", source)
 		hub.broadcast(map[string]any{"type": "sync_started", "source": source, "ts": time.Now().UTC().UnixMilli()})
@@ -1059,14 +1084,47 @@ func startRefreshLoop(ctx context.Context, setup *setupStore, provider thinqProv
 			hub.broadcast(map[string]any{"type": "sync_failed", "source": source, "error": err.Error(), "ts": time.Now().UTC().UnixMilli()})
 		}
 	}
+	nextInterval := func() time.Duration {
+		cfg, err := setup.load()
+		if err != nil {
+			return 3 * time.Minute
+		}
+		sec := cfg.SyncIntervalSec
+		if sec <= 0 {
+			sec = 180
+		}
+		if sec < 120 {
+			sec = 120
+		}
+		if sec > 3600 {
+			sec = 3600
+		}
+		return time.Duration(sec) * time.Second
+	}
+	resetTimer := func(timer *time.Timer) {
+		interval := nextInterval()
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		timer.Reset(interval)
+	}
 	handleSync("boot")
+	timer := time.NewTimer(nextInterval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			logInfof("refresh loop stopping due to context cancellation")
 			return
 		case <-syncNow:
-			handleSync("realtime")
+			handleSync("manual")
+			resetTimer(timer)
+		case <-timer.C:
+			handleSync("interval")
+			resetTimer(timer)
 		}
 	}
 }
@@ -1210,7 +1268,14 @@ func main() {
 	cloudProvider := newCloudThinQProvider()
 	realtimeBridge := newThinQRealtimeBridge(setup, cloudProvider)
 
-	mqttClient, err := newMQTTClient(brokerURL)
+	mqttInitTimeout := 2 * time.Minute
+	if raw := strings.TrimSpace(os.Getenv("LG_THINQ_MQTT_INIT_TIMEOUT_SEC")); raw != "" {
+		if sec, parseErr := strconv.Atoi(raw); parseErr == nil && sec >= 0 {
+			mqttInitTimeout = time.Duration(sec) * time.Second
+		}
+	}
+
+	mqttClient, err := newMQTTClientWithRetry(brokerURL, mqttInitTimeout, 3*time.Second)
 	if err != nil {
 		logWarnf("mqtt disabled due to init error: %v", err)
 	}
@@ -1308,10 +1373,6 @@ func main() {
 			logInfof("mqtt command applied requested_id=%s target_id=%s command=%s", requestedID, targetID, cmd.Name)
 			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "applied", "")
 			hub.broadcast(map[string]any{"type": "command_applied", "device_id": sanitizeDeviceID(requestedID), "command": cmd.Name, "provider": cloudProvider.Name(), "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
-			select {
-			case syncNow <- struct{}{}:
-			default:
-			}
 		})
 		if tok.Wait() && tok.Error() != nil {
 			logWarnf("mqtt command subscribe failed: %v", tok.Error())
@@ -1708,14 +1769,8 @@ func main() {
 		applyOptimisticState(optimisticDev.State, optimisticDev.Type, cmd)
 		publishDeviceState(mqttClient, optimisticDev, stateGate, true)
 		store.apply(deviceID, cmd)
-		select {
-		case syncNow <- struct{}{}:
-			logInfof("api device-command queued sync id=%s command=%s", deviceID, cmd.Name)
-		default:
-			logDebugf("api device-command sync queue already pending id=%s command=%s", deviceID, cmd.Name)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": false})
 	})
 
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
