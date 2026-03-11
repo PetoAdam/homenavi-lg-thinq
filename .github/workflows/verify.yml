@@ -47,21 +47,17 @@ jobs:
           file: ./Dockerfile
           push: false
           tags: homenavi-lg-thinq:latest
-
-      - name: Install Trivy
-        run: |
-          set -euo pipefail
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.56.1
-          trivy --version
+          outputs: type=docker,dest=/tmp/homenavi-lg-thinq.tar
 
       - name: Trivy image scan
         run: |
           set -euo pipefail
-          trivy image \
+          docker run --rm \
+            -v /tmp:/tmp \
+            aquasec/trivy:0.69.3 image \
+            --input /tmp/homenavi-lg-thinq.tar \
             --format table \
             --exit-code 1 \
             --ignore-unfixed \
             --vuln-type os,library \
-            --severity CRITICAL,HIGH \
-            homenavi-lg-thinq:latest
+            --severity CRITICAL,HIGH
