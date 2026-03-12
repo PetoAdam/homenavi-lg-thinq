@@ -40,6 +40,11 @@ spec:
                 name: {{ . }}
             {{- end }}
           {{- end }}
+          {{- if .Values.persistence.enabled }}
+          volumeMounts:
+            - name: integration-config
+              mountPath: {{ .Values.persistence.mountPath }}
+          {{- end }}
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -48,6 +53,12 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if .Values.persistence.enabled }}
+      volumes:
+        - name: integration-config
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-config" (include "lg-thinq.fullname" .)) .Values.persistence.existingClaim }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

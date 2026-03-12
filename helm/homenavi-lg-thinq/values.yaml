@@ -14,6 +14,15 @@ containerPort: 8099
 env: {}
 envFromSecrets: []
 
+persistence:
+  enabled: false
+  existingClaim: ""
+  mountPath: /app/config
+  accessModes:
+    - ReadWriteOnce
+  size: 256Mi
+  storageClassName: ""
+
 resources: {}
 podSecurityContext: {}
 securityContext: {}
