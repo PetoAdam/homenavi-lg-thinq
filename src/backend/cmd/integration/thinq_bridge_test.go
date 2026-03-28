@@ -98,33 +98,19 @@ func TestTranslateWasherCommand(t *testing.T) {
 	}
 }
 
-func TestApplyOptimisticStateWasherUpdatesNestedResponse(t *testing.T) {
+func TestExpectedStateForCommandWasherPowerOn(t *testing.T) {
 	d := thinqDevice{
 		ID:   "washer-1",
 		Type: "washer",
-		State: map[string]any{
-			"response": []any{map[string]any{
-				"run_state": "power_off",
-				"runState":  map[string]any{"currentState": "power_off"},
-				"timer":     map[string]any{"remainMinute": 0},
-			}},
-			"run_state":           "power_off",
-			"remaining_min":       0,
-			"door_locked":         false,
-			"timestamp":           "2026-02-21T00:00:00Z",
-			"remoteControlEnable": map[string]any{"remoteControlEnabled": true},
-		},
 	}
 
 	cmd := thinqCommand{Name: "set_power", Params: map[string]any{"operation": map[string]any{"washerOperationMode": "POWER_ON"}}}
-	applyOptimisticState(d.State, d.Type, cmd)
-
-	state := mapThinQToHDPState(d)
-	if state["power"] != "on" {
-		t.Fatalf("expected power on, got %#v", state["power"])
+	expected := expectedStateForCommand(d, cmd)
+	if expected["power"] != "on" {
+		t.Fatalf("expected power on, got %#v", expected["power"])
 	}
-	if state["run_state"] == "power_off" {
-		t.Fatalf("expected run_state not power_off, got %#v", state["run_state"])
+	if len(expected) != 1 {
+		t.Fatalf("expected a minimal confirmed-state patch, got %#v", expected)
 	}
 }
 

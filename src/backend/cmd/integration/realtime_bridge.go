@@ -224,7 +224,14 @@ func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT m
 		})
 	}
 
-	_ = syncNow
+	if syncNow != nil {
+		select {
+		case syncNow <- struct{}{}:
+			logDebugf("thinq realtime sync requested topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
+		default:
+			logDebugf("thinq realtime sync already queued topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
+		}
+	}
 	b.mu.Lock()
 	b.lastSyncPulse = time.Now()
 	b.mu.Unlock()

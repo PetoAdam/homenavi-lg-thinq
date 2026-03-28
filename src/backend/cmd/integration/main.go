@@ -658,11 +658,8 @@ func (g *commandStateGate) trackWithBaseline(deviceID, corr string, expected map
 	g.mu.Unlock()
 }
 
-func (g *commandStateGate) allow(deviceID string, state map[string]any, optimistic bool) bool {
+func (g *commandStateGate) allow(deviceID string, state map[string]any) bool {
 	if g == nil {
-		return true
-	}
-	if optimistic {
 		return true
 	}
 	id := sanitizeDeviceID(deviceID)
@@ -677,15 +674,15 @@ func (g *commandStateGate) allow(deviceID string, state map[string]any, optimist
 		delete(g.pending, id)
 		return true
 	}
+	if len(p.Expected) > 0 && expectedStateSatisfied(state, p.Expected) {
+		delete(g.pending, id)
+		return true
+	}
 	if now.Before(p.FreezeUntil) {
 		return false
 	}
 
 	if len(p.Expected) > 0 {
-		if expectedStateSatisfied(state, p.Expected) {
-			delete(g.pending, id)
-			return true
-		}
 		return false
 	}
 
@@ -1020,18 +1017,19 @@ func publishMetadata(cli mqtt.Client, store *bridgeStore) {
 	}
 }
 
-func publishDeviceState(cli mqtt.Client, dev thinqDevice, gate *commandStateGate, optimistic bool) {
+func publishDeviceState(cli mqtt.Client, dev thinqDevice, gate *commandStateGate) {
 	state := mapThinQToHDPState(dev)
-	if gate != nil && !gate.allow(dev.ID, state, optimistic) {
+	if gate != nil && !gate.allow(dev.ID, state) {
 		gate.logBlocked(dev.ID)
 		return
 	}
-	publishJSON(cli, hdpStateTopic+sanitizeDeviceID(dev.ID), true, map[string]any{"type": "state", "device_id": sanitizeDeviceID(dev.ID), "state": state})
+	payload := map[string]any{"type": "state", "device_id": sanitizeDeviceID(dev.ID), "state": state}
+	publishJSON(cli, hdpStateTopic+sanitizeDeviceID(dev.ID), true, payload)
 }
 
-func publishState(cli mqtt.Client, store *bridgeStore, gate *commandStateGate, optimistic bool) {
+func publishState(cli mqtt.Client, store *bridgeStore, gate *commandStateGate) {
 	for _, dev := range store.list() {
-		publishDeviceState(cli, dev, gate, optimistic)
+		publishDeviceState(cli, dev, gate)
 	}
 }
 
@@ -1047,7 +1045,7 @@ func clearRetainedDevice(cli mqtt.Client, deviceID string) {
 }
 
 func publishCommandResult(cli mqtt.Client, deviceID string, corr string, success bool, status string, errMsg string) {
-	payload := map[string]any{"type": "command_result", "device_id": deviceID, "corr": corr, "success": success, "status": status}
+	payload := map[string]any{"type": "command_result", "origin": "adapter", "device_id": deviceID, "corr": corr, "success": success, "status": status}
 	if strings.TrimSpace(errMsg) != "" {
 		payload["error"] = errMsg
 	}
@@ -1073,7 +1071,7 @@ func runSync(ctx context.Context, setup *setupStore, provider thinqProvider, sto
 	}
 	removed := store.replace(devices)
 	publishMetadata(cli, store)
-	publishState(cli, store, gate, false)
+	publishState(cli, store, gate)
 	for _, deviceID := range removed {
 		clearRetainedDevice(cli, deviceID)
 	}
@@ -1352,6 +1350,7 @@ func main() {
 			expected := expectedStateForCommand(dev, cmd)
 			baseline := mapThinQToHDPState(dev)
 			stateGate.trackWithBaseline(targetID, corr, expected, baseline)
+			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "accepted", "")
 
 			cfg, cfgErr := setup.load()
 			if cfgErr != nil {
@@ -1368,17 +1367,8 @@ func main() {
 				return
 			}
 			stateGate.extendFreeze(targetID, corr, commandStateGatePostGrace)
-			optimisticDev := dev
-			optimisticDev.ID = targetID
-			optimisticDev.State = cloneAnyMap(dev.State)
-			if optimisticDev.State == nil {
-				optimisticDev.State = map[string]any{}
-			}
-			applyOptimisticState(optimisticDev.State, optimisticDev.Type, cmd)
-			publishDeviceState(mqttClient, optimisticDev, stateGate, true)
-			store.apply(targetID, cmd)
 			logInfof("mqtt command applied requested_id=%s target_id=%s command=%s", requestedID, targetID, cmd.Name)
-			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "applied", "")
+			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "in_progress", "")
 			hub.broadcast(map[string]any{"type": "command_applied", "device_id": sanitizeDeviceID(requestedID), "command": cmd.Name, "provider": cloudProvider.Name(), "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 		})
 		if tok.Wait() && tok.Error() != nil {
@@ -1767,15 +1757,6 @@ func main() {
 			return
 		}
 		stateGate.extendFreeze(deviceID, corr, commandStateGatePostGrace)
-		optimisticDev := dev
-		optimisticDev.ID = deviceID
-		optimisticDev.State = cloneAnyMap(dev.State)
-		if optimisticDev.State == nil {
-			optimisticDev.State = map[string]any{}
-		}
-		applyOptimisticState(optimisticDev.State, optimisticDev.Type, cmd)
-		publishDeviceState(mqttClient, optimisticDev, stateGate, true)
-		store.apply(deviceID, cmd)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": false})
 	})

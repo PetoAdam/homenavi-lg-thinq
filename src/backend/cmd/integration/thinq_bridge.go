@@ -355,20 +355,6 @@ func (s *bridgeStore) list() []thinqDevice {
 	return out
 }
 
-func (s *bridgeStore) apply(deviceID string, cmd thinqCommand) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	d, ok := s.devices[deviceID]
-	if !ok {
-		return
-	}
-	if d.State == nil {
-		d.State = map[string]any{}
-	}
-	applyOptimisticState(d.State, normalizeDeviceType(d.Type), cmd)
-	s.devices[deviceID] = d
-}
-
 func (s *bridgeStore) allSnapshot() map[string]any {
 	devs := s.list()
 	out := make(map[string]any, len(devs))
@@ -825,98 +811,6 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 		}
 	default:
 		return thinqCommand{}, fmt.Errorf("unsupported device type")
-	}
-}
-
-func applyOptimisticState(state map[string]any, deviceType string, cmd thinqCommand) {
-	switch normalizeDeviceType(deviceType) {
-	case "tv":
-		switch cmd.Name {
-		case "set_power":
-			state["power"] = normalizePower(cmd.Params["power"])
-		case "set_volume":
-			state["volume"] = clamp(asInt(cmd.Params["volume"], 12), 0, 100)
-		case "set_mute":
-			state["muted"] = asBool(cmd.Params["muted"])
-		case "set_input":
-			state["input"] = firstNonEmpty(asString(cmd.Params["input"]), "hdmi1")
-		}
-	case "washer":
-		// ThinQ washer state sometimes comes nested under state.response[0].
-		// Keep top-level and nested views in sync for optimistic publishes.
-		targets := []map[string]any{state}
-		if response, ok := state["response"].([]any); ok && len(response) > 0 {
-			if first, ok := response[0].(map[string]any); ok {
-				targets = append(targets, first)
-			}
-		}
-		setRunState := func(runState string) {
-			for _, tgt := range targets {
-				tgt["run_state"] = runState
-				if rs, ok := tgt["runState"].(map[string]any); ok {
-					rs["currentState"] = runState
-					tgt["runState"] = rs
-				}
-			}
-		}
-		setDoorLocked := func(v bool) {
-			for _, tgt := range targets {
-				tgt["door_locked"] = v
-				if rc, ok := tgt["remoteControlEnable"].(map[string]any); ok {
-					rc["remoteControlEnabled"] = v
-					tgt["remoteControlEnable"] = rc
-				}
-			}
-		}
-		setRemainingMin := func(v int) {
-			for _, tgt := range targets {
-				tgt["remaining_min"] = v
-				if timer, ok := tgt["timer"].(map[string]any); ok {
-					timer["remainMinute"] = v
-					tgt["timer"] = timer
-				}
-			}
-		}
-		setPower := func(v string) {
-			for _, tgt := range targets {
-				tgt["power"] = v
-			}
-		}
-
-		washerMode := ""
-		if operation, ok := cmd.Params["operation"].(map[string]any); ok {
-			washerMode = strings.ToUpper(strings.TrimSpace(asString(operation["washerOperationMode"])))
-		}
-		switch cmd.Name {
-		case "start":
-			setRunState("running")
-			setRemainingMin(45)
-			setDoorLocked(true)
-		case "stop":
-			setRunState("idle")
-			setRemainingMin(0)
-			setDoorLocked(false)
-		case "set_power":
-			if washerMode == "POWER_ON" {
-				setPower("on")
-				setRunState("standby")
-			} else {
-				setPower("off")
-				setRunState("power_off")
-			}
-		case "set_operation_mode":
-			if washerMode == "START" {
-				setRunState("running")
-			} else if washerMode == "STOP" {
-				setRunState("idle")
-			} else if washerMode == "POWER_ON" {
-				setPower("on")
-				setRunState("standby")
-			} else if washerMode == "POWER_OFF" {
-				setPower("off")
-				setRunState("power_off")
-			}
-		}
 	}
 }
 
