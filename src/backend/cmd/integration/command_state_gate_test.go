@@ -126,3 +126,25 @@ func TestCommandStateGate_NoExpectedRequiresChangeWhenBaselineProvided(t *testin
 		t.Fatalf("expected gate to be cleared after allowing")
 	}
 }
+
+func TestCommandStateGate_HasPendingMatchesCorrAndExpires(t *testing.T) {
+	g := &commandStateGate{
+		pending: map[string]pendingStateExpectation{},
+		timeout: 60 * time.Millisecond,
+		freeze:  0,
+	}
+	deviceID := "device-5"
+	g.track(deviceID, "c5", map[string]any{"power": "on"})
+
+	if !g.hasPending(deviceID, "c5") {
+		t.Fatalf("expected pending command to be visible for matching corr")
+	}
+	if g.hasPending(deviceID, "other") {
+		t.Fatalf("expected pending lookup with different corr to be ignored")
+	}
+
+	time.Sleep(75 * time.Millisecond)
+	if g.hasPending(deviceID, "c5") {
+		t.Fatalf("expected pending command to expire")
+	}
+}

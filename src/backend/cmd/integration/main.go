@@ -259,6 +259,12 @@ type setupStore struct {
 	mu   sync.Mutex
 }
 
+func defaultSetupConfig() setupConfig {
+	return setupConfig{
+		RealtimeEnabled: true,
+	}
+}
+
 const defaultSetupFileName = "lg-thinq.setup.json"
 
 func setupFileName() string {
@@ -457,21 +463,26 @@ func (s *setupStore) loadUnlocked() (setupConfig, error) {
 	resolved := ensureSetupFilePath(s.resolvePath())
 	if resolved == "" {
 		logWarnf("setup load using defaults because resolved path is empty")
-		return applySetupDefaults(cfg), nil
+		return applySetupDefaults(defaultSetupConfig()), nil
 	}
 	logDebugf("setup load path=%s", resolved)
 	data, err := os.ReadFile(resolved) // #nosec G304
 	if err != nil {
 		if os.IsNotExist(err) {
 			logWarnf("setup file missing path=%s; using defaults", resolved)
-			return applySetupDefaults(cfg), nil
+			return applySetupDefaults(defaultSetupConfig()), nil
 		}
 		logWarnf("setup load failed path=%s err=%v", resolved, err)
 		return cfg, err
 	}
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(data, &raw)
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		logWarnf("setup json invalid path=%s; falling back to defaults err=%v", resolved, err)
-		return applySetupDefaults(setupConfig{}), nil
+		return applySetupDefaults(defaultSetupConfig()), nil
+	}
+	if _, ok := raw["realtime_enabled"]; !ok {
+		cfg.RealtimeEnabled = true
 	}
 	if cfg.SyncIntervalSec <= 0 {
 		cfg.SyncIntervalSec = 180
@@ -619,6 +630,12 @@ type commandStateGate struct {
 	freeze  time.Duration
 }
 
+type commandStateResolution struct {
+	DeviceID string
+	Corr     string
+	Status   string
+}
+
 func newCommandStateGate(timeout time.Duration) *commandStateGate {
 	if timeout <= 0 {
 		timeout = commandStateGateTimeout
@@ -738,6 +755,82 @@ func (g *commandStateGate) extendFreeze(deviceID, corr string, d time.Duration) 
 		p.FreezeUntil = until
 		g.pending[id] = p
 	}
+}
+
+func (g *commandStateGate) hasPending(deviceID, corr string) bool {
+	if g == nil {
+		return false
+	}
+	id := sanitizeDeviceID(deviceID)
+	corr = strings.TrimSpace(corr)
+	now := time.Now().UTC()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[id]
+	if !ok {
+		return false
+	}
+	if now.After(p.Expires) {
+		delete(g.pending, id)
+		return false
+	}
+	if corr != "" && !strings.EqualFold(strings.TrimSpace(p.Corr), corr) {
+		return false
+	}
+	return true
+}
+
+func (g *commandStateGate) pendingStatus(deviceID, corr string) (bool, bool) {
+	if g == nil {
+		return false, false
+	}
+	id := sanitizeDeviceID(deviceID)
+	corr = strings.TrimSpace(corr)
+	now := time.Now().UTC()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[id]
+	if !ok {
+		return false, false
+	}
+	if corr != "" && !strings.EqualFold(strings.TrimSpace(p.Corr), corr) {
+		return false, false
+	}
+	if now.After(p.Expires) {
+		delete(g.pending, id)
+		return false, true
+	}
+	return true, false
+}
+
+func (g *commandStateGate) peekPending(deviceID string) *pendingStateExpectation {
+	if g == nil {
+		return nil
+	}
+	id := sanitizeDeviceID(deviceID)
+	now := time.Now().UTC()
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	p, ok := g.pending[id]
+	if !ok {
+		return nil
+	}
+	if now.After(p.Expires) {
+		delete(g.pending, id)
+		return nil
+	}
+	clone := pendingStateExpectation{
+		Corr:        p.Corr,
+		Expected:    cloneAnyMap(p.Expected),
+		Baseline:    cloneAnyMap(p.Baseline),
+		FreezeUntil: p.FreezeUntil,
+		Expires:     p.Expires,
+		LastLog:     p.LastLog,
+	}
+	return &clone
 }
 
 func (g *commandStateGate) logBlocked(deviceID string) {
@@ -1017,19 +1110,47 @@ func publishMetadata(cli mqtt.Client, store *bridgeStore) {
 	}
 }
 
-func publishDeviceState(cli mqtt.Client, dev thinqDevice, gate *commandStateGate) {
+func publishDeviceState(cli mqtt.Client, dev thinqDevice, gate *commandStateGate) *commandStateResolution {
 	state := mapThinQToHDPState(dev)
-	if gate != nil && !gate.allow(dev.ID, state) {
-		gate.logBlocked(dev.ID)
-		return
+	var pendingBefore *pendingStateExpectation
+	if gate != nil {
+		pendingBefore = gate.peekPending(dev.ID)
+		if !gate.allow(dev.ID, state) {
+			gate.logBlocked(dev.ID)
+			return nil
+		}
 	}
 	payload := map[string]any{"type": "state", "device_id": sanitizeDeviceID(dev.ID), "state": state}
 	publishJSON(cli, hdpStateTopic+sanitizeDeviceID(dev.ID), true, payload)
+	if pendingBefore == nil || strings.TrimSpace(pendingBefore.Corr) == "" {
+		return nil
+	}
+	status := "applied"
+	if time.Now().UTC().After(pendingBefore.Expires) {
+		status = "timeout"
+	}
+	return &commandStateResolution{DeviceID: sanitizeDeviceID(dev.ID), Corr: strings.TrimSpace(pendingBefore.Corr), Status: status}
 }
 
-func publishState(cli mqtt.Client, store *bridgeStore, gate *commandStateGate) {
+func publishState(cli mqtt.Client, store *bridgeStore, gate *commandStateGate, hub *wsHub) {
 	for _, dev := range store.list() {
-		publishDeviceState(cli, dev, gate)
+		resolution := publishDeviceState(cli, dev, gate)
+		if resolution == nil {
+			continue
+		}
+		success := resolution.Status == "applied"
+		errMsg := ""
+		if resolution.Status == "timeout" {
+			errMsg = "state confirmation timed out"
+		}
+		publishCommandResult(cli, resolution.DeviceID, resolution.Corr, success, resolution.Status, errMsg)
+		if hub != nil {
+			evtType := "command_applied"
+			if resolution.Status == "timeout" {
+				evtType = "command_timeout"
+			}
+			hub.broadcast(map[string]any{"type": evtType, "device_id": resolution.DeviceID, "corr": resolution.Corr, "status": resolution.Status, "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+		}
 	}
 }
 
@@ -1052,6 +1173,75 @@ func publishCommandResult(cli mqtt.Client, deviceID string, corr string, success
 	publishJSON(cli, hdpCmdResTopic+deviceID, false, payload)
 }
 
+func queueThinQSync(syncNow chan<- struct{}) bool {
+	if syncNow == nil {
+		return false
+	}
+	select {
+	case syncNow <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func monitorThinQCommandState(ctx context.Context, deviceID, corr string, gate *commandStateGate, syncNow chan<- struct{}, cli mqtt.Client, hub *wsHub, store *bridgeStore) {
+	if gate == nil || syncNow == nil {
+		return
+	}
+	pending, expired := gate.pendingStatus(deviceID, corr)
+	if expired {
+		publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+		if hub != nil && store != nil {
+			hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+		}
+		return
+	}
+	if !pending {
+		return
+	}
+	go func() {
+		monitorCtx, cancel := context.WithTimeout(ctx, commandStateGateTimeout+(2*commandStateGateFreezeWindow))
+		defer cancel()
+
+		queueThinQSync(syncNow)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			pending, expired := gate.pendingStatus(deviceID, corr)
+			if expired {
+				publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+				if hub != nil && store != nil {
+					hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+				}
+				return
+			}
+			if !pending {
+				return
+			}
+			select {
+			case <-monitorCtx.Done():
+				return
+			case <-ticker.C:
+				pending, expired := gate.pendingStatus(deviceID, corr)
+				if expired {
+					publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+					if hub != nil && store != nil {
+						hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+					}
+					return
+				}
+				if !pending {
+					return
+				}
+				queued := queueThinQSync(syncNow)
+				logDebugf("command monitor sync requested device_id=%s corr=%s queued=%t", sanitizeDeviceID(deviceID), corr, queued)
+			}
+		}
+	}()
+}
+
 func runSync(ctx context.Context, setup *setupStore, provider thinqProvider, store *bridgeStore, cli mqtt.Client, hub *wsHub, source string, gate *commandStateGate) error {
 	started := time.Now()
 	cfg, err := setup.load()
@@ -1071,7 +1261,7 @@ func runSync(ctx context.Context, setup *setupStore, provider thinqProvider, sto
 	}
 	removed := store.replace(devices)
 	publishMetadata(cli, store)
-	publishState(cli, store, gate)
+	publishState(cli, store, gate, hub)
 	for _, deviceID := range removed {
 		clearRetainedDevice(cli, deviceID)
 	}
@@ -1367,9 +1557,10 @@ func main() {
 				return
 			}
 			stateGate.extendFreeze(targetID, corr, commandStateGatePostGrace)
+			monitorThinQCommandState(ctx, targetID, corr, stateGate, syncNow, mqttClient, hub, store)
 			logInfof("mqtt command applied requested_id=%s target_id=%s command=%s", requestedID, targetID, cmd.Name)
 			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "in_progress", "")
-			hub.broadcast(map[string]any{"type": "command_applied", "device_id": sanitizeDeviceID(requestedID), "command": cmd.Name, "provider": cloudProvider.Name(), "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+			hub.broadcast(map[string]any{"type": "command_in_progress", "device_id": sanitizeDeviceID(requestedID), "corr": corr, "command": cmd.Name, "provider": cloudProvider.Name(), "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 		})
 		if tok.Wait() && tok.Error() != nil {
 			logWarnf("mqtt command subscribe failed: %v", tok.Error())
@@ -1757,8 +1948,9 @@ func main() {
 			return
 		}
 		stateGate.extendFreeze(deviceID, corr, commandStateGatePostGrace)
+		monitorThinQCommandState(r.Context(), deviceID, corr, stateGate, syncNow, mqttClient, hub, store)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": false})
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": true})
 	})
 
 	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {

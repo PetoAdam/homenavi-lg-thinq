@@ -38,6 +38,7 @@ func TestMapThinQToHDPStateWasher(t *testing.T) {
 		Online: true,
 		State: map[string]any{
 			"run_state": "running", "cycle": "quick", "remaining_min": "55", "door_locked": 1,
+			"response": []any{map[string]any{"runState": map[string]any{"currentState": "START"}}},
 		},
 	}
 	state := mapThinQToHDPState(d)
@@ -49,6 +50,9 @@ func TestMapThinQToHDPStateWasher(t *testing.T) {
 	}
 	if state["door_locked"] != true {
 		t.Fatalf("expected door_locked true, got %#v", state["door_locked"])
+	}
+	if state["operation_mode"] != "START" {
+		t.Fatalf("expected operation_mode START, got %#v", state["operation_mode"])
 	}
 }
 
@@ -63,6 +67,20 @@ func TestTranslateTVCommand(t *testing.T) {
 	}
 	if cmd.Params["volume"] != 44 {
 		t.Fatalf("expected volume 44, got %#v", cmd.Params["volume"])
+	}
+}
+
+func TestTranslateTVNativeSetStatePowerCommand(t *testing.T) {
+	d := thinqDevice{ID: "tv-1", Type: "tv"}
+	cmd, err := translateHDPCommand(d, "set_state", map[string]any{"power": "on"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cmd.Name != "set_power" {
+		t.Fatalf("expected set_power, got %s", cmd.Name)
+	}
+	if cmd.Params["power"] != "on" {
+		t.Fatalf("expected power on, got %#v", cmd.Params["power"])
 	}
 }
 
@@ -91,6 +109,34 @@ func TestTranslateWasherCommand(t *testing.T) {
 	location, ok := cmd.Params["location"].(map[string]any)
 	if !ok || location["locationName"] != "MAIN" {
 		t.Fatalf("expected location MAIN, got %#v", cmd.Params["location"])
+	}
+	operation, ok := cmd.Params["operation"].(map[string]any)
+	if !ok || operation["washerOperationMode"] != "START" {
+		t.Fatalf("expected operation START, got %#v", cmd.Params["operation"])
+	}
+}
+
+func TestTranslateWasherNativeSetStateOperationMode(t *testing.T) {
+	d := thinqDevice{
+		ID:   "washer-1",
+		Type: "washer",
+		State: map[string]any{
+			"response": []any{map[string]any{"location": map[string]any{"locationName": "MAIN"}}},
+			"profile": map[string]any{
+				"property": []any{map[string]any{
+					"operation": map[string]any{
+						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
+					},
+				}},
+			},
+		},
+	}
+	cmd, err := translateHDPCommand(d, "set_state", map[string]any{"operation_mode": "START"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cmd.Name != "set_operation_mode" {
+		t.Fatalf("expected set_operation_mode, got %s", cmd.Name)
 	}
 	operation, ok := cmd.Params["operation"].(map[string]any)
 	if !ok || operation["washerOperationMode"] != "START" {

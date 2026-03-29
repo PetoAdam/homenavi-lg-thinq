@@ -95,3 +95,45 @@ func TestSetupStoreLoadHandlesLegacyDirectoryTarget(t *testing.T) {
 		t.Fatalf("unexpected PAT token: got %q", got.PATToken)
 	}
 }
+
+func TestSetupStoreLoadDefaultsRealtimeEnabledWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	s := &setupStore{path: root}
+
+	got, err := s.load()
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if !got.RealtimeEnabled {
+		t.Fatalf("expected realtime to default to enabled when config is missing")
+	}
+}
+
+func TestSetupStoreLoadPreservesExplicitRealtimeDisabled(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	setupFile := filepath.Join(root, defaultSetupFileName)
+	raw := setupConfig{
+		PATToken:        "token",
+		RealtimeEnabled: false,
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatalf("marshal setup: %v", err)
+	}
+	if err := os.WriteFile(setupFile, b, 0o600); err != nil {
+		t.Fatalf("write setup file: %v", err)
+	}
+
+	s := &setupStore{path: root}
+	got, err := s.load()
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+	if got.RealtimeEnabled {
+		t.Fatalf("expected explicit realtime_enabled=false to be preserved")
+	}
+}

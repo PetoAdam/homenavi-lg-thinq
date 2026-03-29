@@ -631,19 +631,38 @@ func mapThinQToHDPState(d thinqDevice) map[string]any {
 			}
 		}
 		runState := firstNonEmpty(strings.ToLower(asString(src["run_state"])), strings.ToLower(asString(state["run_state"])), "idle")
+		operationMode := ""
 		if rs, ok := src["runState"].(map[string]any); ok {
-			runState = firstNonEmpty(strings.ToLower(asString(rs["currentState"])), runState)
+			operationMode = strings.ToUpper(strings.TrimSpace(asString(rs["currentState"])))
+			runState = firstNonEmpty(normalizeWasherRunState(operationMode), runState)
 		}
 		out["run_state"] = runState
+		if operationMode == "" {
+			switch {
+			case strings.Contains(runState, "off"):
+				operationMode = "POWER_OFF"
+			case runState == "running":
+				operationMode = "START"
+			case runState == "idle":
+				operationMode = "STOP"
+			}
+		}
+		if operationMode != "" {
+			out["operation_mode"] = operationMode
+		}
 		if cycleObj, ok := src["cycle"].(map[string]any); ok {
 			out["cycle"] = firstNonEmpty(asString(cycleObj["cycleCount"]), "cotton")
 		} else {
-			out["cycle"] = firstNonEmpty(asString(src["cycle"]), "cotton")
+			out["cycle"] = firstNonEmpty(asString(src["cycle"]), asString(state["cycle"]), "cotton")
 		}
 		if timer, ok := src["timer"].(map[string]any); ok {
 			out["remaining_min"] = clamp(asInt(timer["remainMinute"], 0)+(60*clamp(asInt(timer["remainHour"], 0), 0, 999)), 0, 999)
 		} else {
-			out["remaining_min"] = clamp(asInt(src["remaining_min"], 0), 0, 999)
+			remaining := asInt(src["remaining_min"], -1)
+			if remaining < 0 {
+				remaining = asInt(state["remaining_min"], 0)
+			}
+			out["remaining_min"] = clamp(remaining, 0, 999)
 		}
 		// Prefer an explicit door lock field when present; fall back to remoteControlEnabled when that's all we have.
 		if raw, ok := src["door_locked"]; ok {
@@ -655,9 +674,13 @@ func mapThinQToHDPState(d thinqDevice) map[string]any {
 		} else if rc, ok := src["remoteControlEnable"].(map[string]any); ok {
 			out["door_locked"] = asBool(rc["remoteControlEnabled"])
 		} else {
-			out["door_locked"] = asBool(src["door_locked"])
+			if _, ok := src["door_locked"]; ok {
+				out["door_locked"] = asBool(src["door_locked"])
+			} else {
+				out["door_locked"] = asBool(state["door_locked"])
+			}
 		}
-		out["error_code"] = asString(src["error_code"])
+		out["error_code"] = firstNonEmpty(asString(src["error_code"]), asString(state["error_code"]))
 		if strings.Contains(runState, "off") {
 			out["power"] = "off"
 		} else {
@@ -676,6 +699,21 @@ func mapThinQToHDPState(d thinqDevice) map[string]any {
 		out["power"] = normalizePower(state["power"])
 	}
 	return out
+}
+
+func normalizeWasherRunState(operationMode string) string {
+	switch strings.ToUpper(strings.TrimSpace(operationMode)) {
+	case "START", "RUNNING", "RUN":
+		return "running"
+	case "STOP", "IDLE", "END", "COMPLETE", "COMPLETED":
+		return "idle"
+	case "POWER_OFF", "OFF":
+		return "power_off"
+	case "POWER_ON", "ON":
+		return "idle"
+	default:
+		return strings.ToLower(strings.TrimSpace(operationMode))
+	}
 }
 
 func parseThinQAPIError(op string, resp *http.Response) error {

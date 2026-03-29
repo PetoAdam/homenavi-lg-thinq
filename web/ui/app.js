@@ -57,6 +57,8 @@ const state = {
   connected: false,
 };
 
+let commandRefreshTimer = null;
+
 const basePath = (() => {
   const pathName = window.location.pathname || '';
   const idx = pathName.indexOf('/ui/');
@@ -184,6 +186,33 @@ async function api(path, options = {}) {
   return data;
 }
 
+function clearCommandRefreshTimer() {
+  if (!commandRefreshTimer) return;
+  clearTimeout(commandRefreshTimer);
+  commandRefreshTimer = null;
+}
+
+function scheduleCommandRefresh(delays = [250, 1500, 3500]) {
+  const queue = Array.isArray(delays) ? delays.filter((delay) => Number.isFinite(delay) && delay >= 0) : [];
+  if (!queue.length) return;
+  clearCommandRefreshTimer();
+
+  const runNext = () => {
+    const delay = queue.shift();
+    if (delay == null) return;
+    commandRefreshTimer = setTimeout(async () => {
+      commandRefreshTimer = null;
+      try {
+        await loadSnapshot();
+      } catch {
+      }
+      runNext();
+    }, delay);
+  };
+
+  runNext();
+}
+
 function setStatus(message, ok = true) {
   if (!elements.status) return;
   const base = ['hn-alert', 'hn-small'];
@@ -284,8 +313,7 @@ function hasPowerCapability(device) {
 }
 
 function canSendCommands(device) {
-  if (!device?.online) return false;
-  return device?.mapped_state?.remote_control_enabled !== false;
+  return Boolean(device?.online);
 }
 
 function formatLastSeen(device) {
@@ -406,7 +434,7 @@ function buildDeviceHTML(id, device) {
   const chips = [
     `<span class="hn-chip ${online ? 'hn-chip--ok' : 'hn-chip--err'}">${window.hnIcons?.icon ? window.hnIcons.icon(online ? 'wifi' : 'wifiOff', 'hn-icon') : ''}${online ? 'online' : 'offline'}</span>`,
     `<span class="hn-chip">${window.hnIcons?.icon ? window.hnIcons.icon('power', 'hn-icon') : ''}power: ${escapeHtml(power)}</span>`,
-    `<span class="hn-chip ${actionAllowed ? 'hn-chip--ok' : 'hn-chip--err'}">${window.hnIcons?.icon ? window.hnIcons.icon(actionAllowed ? 'unlock' : 'lock', 'hn-icon') : ''}${actionAllowed ? 'remote enabled' : 'remote locked'}</span>`,
+    `<span class="hn-chip ${(device?.mapped_state?.remote_control_enabled === false) ? 'hn-chip--err' : 'hn-chip--ok'}">${window.hnIcons?.icon ? window.hnIcons.icon((device?.mapped_state?.remote_control_enabled === false) ? 'lock' : 'unlock', 'hn-icon') : ''}${device?.mapped_state?.remote_control_enabled === false ? 'remote state reports locked' : 'remote ready'}</span>`,
   ];
 
   const commandControls = [];
@@ -459,6 +487,7 @@ function attachDeviceActionHandlers() {
       const target = toggle.checked ? 'on' : 'off';
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command: 'set_power', args: { power: target } }) });
+        scheduleCommandRefresh();
         setStatus(`Command sent: ${deviceLabel(deviceId)} power=${target}`, true);
       } catch (err) {
         toggle.checked = previous;
@@ -473,6 +502,7 @@ function attachDeviceActionHandlers() {
       const command = String(btn.getAttribute('data-command') || '');
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args: {} }) });
+        scheduleCommandRefresh();
         setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}`, true);
       } catch (err) {
         setStatus(`Command failed: ${err.message}`, false);
@@ -489,6 +519,7 @@ function attachDeviceActionHandlers() {
       const args = prop ? { [prop]: value } : { value };
       try {
         await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args }) });
+        scheduleCommandRefresh();
         setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}=${value}`, true);
       } catch (err) {
         setStatus(`Command failed: ${err.message}`, false);
@@ -668,6 +699,9 @@ async function sendBulkPower(targetPower) {
     } catch {
     }
   }
+  if (ok > 0) {
+    scheduleCommandRefresh([250, 1500, 4000]);
+  }
   setStatus(`Bulk power ${targetPower}: ${ok}/${candidates.length} commands accepted.`, ok > 0);
 }
 
@@ -692,6 +726,7 @@ function connectWS() {
   ws.onopen = () => {
     state.connected = true;
     setWsStatus('WS: connected', 'ok');
+    scheduleCommandRefresh([200]);
   };
 
   ws.onmessage = (event) => {
@@ -723,12 +758,14 @@ function connectWS() {
   ws.onclose = () => {
     state.connected = false;
     setWsStatus('WS: reconnecting…', 'err');
+    scheduleCommandRefresh([300]);
     setTimeout(connectWS, 2000);
   };
 
   ws.onerror = () => {
     state.connected = false;
     setWsStatus('WS: error', 'err');
+    scheduleCommandRefresh([300]);
   };
 }
 

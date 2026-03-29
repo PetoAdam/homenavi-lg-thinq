@@ -52,6 +52,8 @@ const COMMAND_ROLLBACK_LOCK_MS = 5000;
 
 let uiWakeTimer = null;
 let pendingClearTimer = null;
+let snapshotFallbackTimer = null;
+let snapshotPollTimer = null;
 
 function getCookie(name) {
   const parts = (document.cookie || '').split(';').map((value) => value.trim());
@@ -66,8 +68,8 @@ function authHeaders() {
 }
 
 function suppressRealtimeUntilAfterNextRest() {
-  state.realtimeAwaitingRest = false;
-  state.realtimeSuppressUntil = Date.now() + REALTIME_RESUME_GRACE_MS;
+  state.realtimeAwaitingRest = true;
+  state.realtimeSuppressUntil = Number.MAX_SAFE_INTEGER;
   state.commandStableUntil = 0;
   state.commandObservedFingerprint = '';
   state.commandDisableUntil = 0;
@@ -124,6 +126,10 @@ function clearPendingState({ statusMessage = 'Updated.' } = {}) {
     clearTimeout(pendingClearTimer);
     pendingClearTimer = null;
   }
+  if (snapshotPollTimer) {
+    clearTimeout(snapshotPollTimer);
+    snapshotPollTimer = null;
+  }
   setStatus(statusMessage, true);
   setTimeout(() => setStatus('Ready.', null), 900);
 }
@@ -148,11 +154,75 @@ function schedulePendingAutoClear(atTs) {
 }
 
 function resumeRealtimeAfterRestSnapshot() {
-  // WS-only feedback mode.
+  if (!state.realtimeAwaitingRest) return;
+  state.realtimeAwaitingRest = false;
+  state.realtimeSuppressUntil = Date.now() + REALTIME_RESUME_GRACE_MS;
+  scheduleUIWakeAt(state.realtimeSuppressUntil + 20);
 }
 
 function realtimeAllowed() {
+  if (state.realtimeAwaitingRest) return false;
   return Date.now() >= (state.realtimeSuppressUntil || 0);
+}
+
+function clearSnapshotFallback() {
+  if (!snapshotFallbackTimer) return;
+  clearTimeout(snapshotFallbackTimer);
+  snapshotFallbackTimer = null;
+}
+
+function clearSnapshotPoll() {
+  if (!snapshotPollTimer) return;
+  clearTimeout(snapshotPollTimer);
+  snapshotPollTimer = null;
+}
+
+async function loadSnapshot({ quiet = false } = {}) {
+  const res = await fetch(`${basePath}/api/realtime/snapshot`, {
+    credentials: 'include',
+    headers: { ...authHeaders() },
+  });
+
+  if (!res.ok) {
+    const msg = res.status === 401
+      ? 'Sign in required for live state.'
+      : `Snapshot unavailable (${res.status})`;
+    if (!quiet) {
+      setStatus(msg, false);
+    }
+    throw new Error(msg);
+  }
+
+  const payload = await res.json();
+  applySnapshot(payload);
+  resumeRealtimeAfterRestSnapshot();
+  return payload;
+}
+
+function scheduleSnapshotFallback(delayMs = 1200) {
+  if (snapshotFallbackTimer) return;
+  snapshotFallbackTimer = setTimeout(async () => {
+    snapshotFallbackTimer = null;
+    try {
+      await loadSnapshot({ quiet: true });
+    } catch {
+    }
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function scheduleSnapshotPoll(delayMs = 250) {
+  if (snapshotPollTimer) return;
+  snapshotPollTimer = setTimeout(async () => {
+    snapshotPollTimer = null;
+    try {
+      await loadSnapshot({ quiet: true });
+    } catch {
+    }
+
+    if (Date.now() < state.commandPendingUntil && state.commandPendingDeviceId) {
+      scheduleSnapshotPoll(1500);
+    }
+  }, Math.max(0, Number(delayMs) || 0));
 }
 
 function deviceStateFingerprint(device) {
@@ -364,7 +434,7 @@ function renderSelected() {
   // Treat missing online info as online so controls aren't disabled by default.
   const online = dev?.online !== false;
   const power = normalizePower(dev);
-  const actionAllowed = dev?.mapped_state?.remote_control_enabled !== false;
+  const remoteReportedLocked = dev?.mapped_state?.remote_control_enabled === false;
 
   const pendingForThis = Date.now() < state.commandPendingUntil && state.commandPendingDeviceId === id;
   const baselineSame = pendingForThis && state.commandBaseline && deviceStateFingerprint(state.devices[id]) === state.commandBaseline;
@@ -380,7 +450,7 @@ function renderSelected() {
 
   const commandAllowed = online && !controlsDisabled;
   const powerAllowed = commandAllowed;
-  const remoteActionAllowed = washer ? (commandAllowed && actionAllowed) : commandAllowed;
+  const remoteActionAllowed = commandAllowed;
 
   let remainingText = '';
   let showRemaining = false;
@@ -415,7 +485,7 @@ function renderSelected() {
     );
     if (dev?.mapped_state && 'remote_control_enabled' in dev.mapped_state) {
       items.push(
-        `<span class="lgw-sicon ${actionAllowed ? 'lgw-sicon--ok' : 'lgw-sicon--err'}" title="${actionAllowed ? 'Remote enabled' : 'Remote locked'}" aria-label="Remote">${iconHtml(actionAllowed ? 'unlock' : 'lock')}</span>`,
+        `<span class="lgw-sicon ${remoteReportedLocked ? 'lgw-sicon--err' : 'lgw-sicon--ok'}" title="${remoteReportedLocked ? 'Remote state reports locked' : 'Remote ready'}" aria-label="Remote">${iconHtml(remoteReportedLocked ? 'lock' : 'unlock')}</span>`,
       );
     }
     if (!suppressState && showRemaining && remainingText) {
@@ -502,7 +572,7 @@ function renderSelected() {
     );
     if (dev?.mapped_state && 'remote_control_enabled' in dev.mapped_state) {
       chips.push(
-        `<span class="hn-chip hn-small ${actionAllowed ? 'hn-chip--ok' : 'hn-chip--err'}">${iconHtml(actionAllowed ? 'unlock' : 'lock')}${actionAllowed ? 'remote: enabled' : 'remote: locked'}</span>`,
+        `<span class="hn-chip hn-small ${remoteReportedLocked ? 'hn-chip--err' : 'hn-chip--ok'}">${iconHtml(remoteReportedLocked ? 'lock' : 'unlock')}${remoteReportedLocked ? 'remote: state locked' : 'remote: ready'}</span>`,
       );
     }
 
@@ -582,6 +652,7 @@ function cancelCommandPendingAfterFailure() {
     clearTimeout(pendingClearTimer);
     pendingClearTimer = null;
   }
+  clearSnapshotPoll();
 }
 
 function attachControlHandlers() {
@@ -595,6 +666,7 @@ function attachControlHandlers() {
         setStatus(`Sending power=${target}…`, null);
         beginCommandPending(deviceId);
         await sendCommand(deviceId, 'set_power', { power: target });
+        scheduleSnapshotPoll(250);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
         cancelCommandPendingAfterFailure();
@@ -612,6 +684,7 @@ function attachControlHandlers() {
         setStatus(`Sending ${command}…`, null);
         beginCommandPending(deviceId);
         await sendCommand(deviceId, command, {});
+        scheduleSnapshotPoll(250);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
         cancelCommandPendingAfterFailure();
@@ -632,6 +705,7 @@ function attachControlHandlers() {
         setStatus(`Sending ${command}…`, null);
         beginCommandPending(deviceId);
         await sendCommand(deviceId, command, args);
+        scheduleSnapshotPoll(250);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
         cancelCommandPendingAfterFailure();
@@ -654,6 +728,7 @@ function attachControlHandlers() {
         setStatus(`Sending ${command}…`, null);
         beginCommandPending(deviceId);
         await sendCommand(deviceId, command, args);
+        scheduleSnapshotPoll(250);
         setStatus('Command queued. Updating…', true);
       } catch (err) {
         cancelCommandPendingAfterFailure();
@@ -810,6 +885,7 @@ function connectWS() {
 
     ws.addEventListener('open', () => {
       wsConnected = true;
+      scheduleSnapshotFallback(1200);
     });
 
     ws.addEventListener('message', (ev) => {
@@ -821,6 +897,7 @@ function connectWS() {
       }
       if (payload && typeof payload === 'object' && payload.devices) {
         wsHasMessage = true;
+        clearSnapshotFallback();
         if (!realtimeAllowed()) {
           return;
         }
@@ -830,15 +907,18 @@ function connectWS() {
 
     ws.addEventListener('close', () => {
       wsConnected = false;
+      scheduleSnapshotFallback(300);
       scheduleWSReconnect();
     });
 
     ws.addEventListener('error', () => {
       wsConnected = false;
+      scheduleSnapshotFallback(300);
       scheduleWSReconnect();
     });
   } catch {
     wsConnected = false;
+    scheduleSnapshotFallback(300);
     scheduleWSReconnect();
   }
 }
@@ -874,3 +954,4 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 connectWS();
+scheduleSnapshotFallback(300);
