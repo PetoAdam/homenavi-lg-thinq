@@ -1478,7 +1478,7 @@ func main() {
 		logWarnf("mqtt disabled due to init error: %v", err)
 	}
 	if mqttClient != nil {
-		go realtimeBridge.Run(ctx, mqttClient, syncNow, hub)
+		go realtimeBridge.Run(ctx, mqttClient, syncNow, hub, store, stateGate)
 		tok := mqttClient.Subscribe(hdpCmdTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 			logInfof("mqtt command received topic=%s bytes=%d", msg.Topic(), len(msg.Payload()))
 			var payload struct {
@@ -1573,7 +1573,7 @@ func main() {
 		go startRefreshLoop(ctx, setup, cloudProvider, mqttClient, store, syncNow, hub, stateGate)
 		defer mqttClient.Disconnect(250)
 	} else {
-		go realtimeBridge.Run(ctx, nil, syncNow, hub)
+		go realtimeBridge.Run(ctx, nil, syncNow, hub, store, stateGate)
 		go startRefreshLoop(ctx, setup, cloudProvider, nil, store, syncNow, hub, stateGate)
 	}
 

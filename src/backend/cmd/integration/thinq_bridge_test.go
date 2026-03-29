@@ -56,6 +56,35 @@ func TestMapThinQToHDPStateWasher(t *testing.T) {
 	}
 }
 
+func TestMapThinQToHDPStateWasherOperationOnlyReport(t *testing.T) {
+	d := thinqDevice{
+		ID:     "washer-2",
+		Type:   "washer",
+		Online: true,
+		State: map[string]any{
+			"response": []any{map[string]any{
+				"location":            map[string]any{"locationName": "MAIN"},
+				"operation":           map[string]any{"washerOperationMode": "START"},
+				"timer":               map[string]any{"remainHour": 0, "remainMinute": 43},
+				"remoteControlEnable": map[string]any{"remoteControlEnabled": true},
+			}},
+		},
+	}
+	state := mapThinQToHDPState(d)
+	if state["run_state"] != "running" {
+		t.Fatalf("expected running, got %#v", state["run_state"])
+	}
+	if state["operation_mode"] != "START" {
+		t.Fatalf("expected operation_mode START, got %#v", state["operation_mode"])
+	}
+	if state["remaining_min"] != 43 {
+		t.Fatalf("expected remaining 43, got %#v", state["remaining_min"])
+	}
+	if state["remote_control_enabled"] != true {
+		t.Fatalf("expected remote_control_enabled true, got %#v", state["remote_control_enabled"])
+	}
+}
+
 func TestTranslateTVCommand(t *testing.T) {
 	d := thinqDevice{ID: "tv-1", Type: "tv"}
 	cmd, err := translateHDPCommand(d, "", map[string]any{"volume": 44})

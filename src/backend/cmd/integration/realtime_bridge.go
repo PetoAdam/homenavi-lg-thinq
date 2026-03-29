@@ -51,7 +51,7 @@ func newThinQRealtimeBridge(setup *setupStore, provider *cloudThinQProvider) *th
 	return &thinQRealtimeBridge{setup: setup, provider: provider}
 }
 
-func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub) {
+func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, store *bridgeStore, gate *commandStateGate) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,7 +74,7 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 			continue
 		}
 
-		err = b.runSession(ctx, cfg, localMQTT, syncNow, hub)
+		err = b.runSession(ctx, cfg, localMQTT, syncNow, hub, store, gate)
 		if err != nil {
 			logWarnf("thinq realtime session ended err=%v", err)
 			if hub != nil {
@@ -95,7 +95,7 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 	}
 }
 
-func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub) error {
+func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, store *bridgeStore, gate *commandStateGate) error {
 	route, err := b.fetchRoute(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("fetch route: %w", err)
@@ -145,7 +145,7 @@ func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, l
 		opts.SetHTTPHeaders(http.Header{"Sec-WebSocket-Protocol": []string{"mqtt"}})
 	}
 	opts.SetDefaultPublishHandler(func(_ mqtt.Client, msg mqtt.Message) {
-		b.handleRealtimeMessage(cfg, localMQTT, syncNow, hub, msg)
+		b.handleRealtimeMessage(cfg, localMQTT, syncNow, hub, store, gate, msg)
 	})
 	opts.OnConnectionLost = func(_ mqtt.Client, err error) {
 		select {
@@ -187,7 +187,7 @@ func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, l
 	}
 }
 
-func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, msg mqtt.Message) {
+func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, store *bridgeStore, gate *commandStateGate, msg mqtt.Message) {
 	payloadBytes := msg.Payload()
 	payloadRaw := string(payloadBytes)
 
@@ -224,6 +224,10 @@ func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT m
 		})
 	}
 
+	if applied := b.applyRealtimeStateUpdate(localMQTT, hub, store, gate, deviceID, parsed); applied {
+		return
+	}
+
 	if syncNow != nil {
 		now := time.Now()
 		if b.allowRealtimeSync(now) {
@@ -237,6 +241,69 @@ func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT m
 			logDebugf("thinq realtime sync throttled topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
 		}
 	}
+}
+
+func (b *thinQRealtimeBridge) applyRealtimeStateUpdate(localMQTT mqtt.Client, hub *wsHub, store *bridgeStore, gate *commandStateGate, deviceID string, parsed map[string]any) bool {
+	if store == nil {
+		return false
+	}
+	id := strings.TrimSpace(deviceID)
+	if id == "" {
+		return false
+	}
+	patch := extractThinQRealtimeStatePatch(parsed)
+	if patch == nil {
+		return false
+	}
+	updated, ok := store.mergeState(id, patch, firstNonEmpty(asString(parsed["timestamp"]), asString(parsed["ts"])))
+	if !ok {
+		return false
+	}
+	resolution := publishDeviceState(localMQTT, updated, gate)
+	if resolution != nil {
+		success := resolution.Status == "applied"
+		errMsg := ""
+		if resolution.Status == "timeout" {
+			errMsg = "state confirmation timed out"
+		}
+		publishCommandResult(localMQTT, resolution.DeviceID, resolution.Corr, success, resolution.Status, errMsg)
+	}
+	if hub != nil {
+		evtType := "thinq_realtime_state"
+		status := ""
+		corr := ""
+		if resolution != nil {
+			status = resolution.Status
+			corr = resolution.Corr
+			if resolution.Status == "timeout" {
+				evtType = "command_timeout"
+			} else {
+				evtType = "command_applied"
+			}
+		}
+		hub.broadcast(map[string]any{"type": evtType, "device_id": sanitizeDeviceID(id), "corr": corr, "status": status, "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
+	}
+	return true
+}
+
+func extractThinQRealtimeStatePatch(parsed map[string]any) any {
+	if len(parsed) == 0 {
+		return nil
+	}
+	if eventMap, ok := parsed["event"].(map[string]any); ok {
+		if report, ok := eventMap["report"]; ok {
+			return cloneAnyValue(report)
+		}
+	}
+	for _, key := range []string{"report", "state", "data", "object", "value", "response"} {
+		if value, ok := parsed[key]; ok {
+			switch value.(type) {
+			case map[string]any, []any:
+				return cloneAnyValue(value)
+			}
+		}
+	}
+	return nil
 }
 
 func (b *thinQRealtimeBridge) allowRealtimeSync(now time.Time) bool {
@@ -295,8 +362,14 @@ func (b *thinQRealtimeBridge) fetchRoute(ctx context.Context, cfg setupConfig) (
 }
 
 func realtimeEndpointForRoute(route thinQRouteInfo, transport string) string {
+	transport = strings.ToLower(strings.TrimSpace(transport))
 	endpoint := strings.TrimSpace(route.MQTTServer)
-	if strings.EqualFold(strings.TrimSpace(transport), "ws") {
+	if transport == "ws" {
+		endpoint = strings.TrimSpace(route.WebSocketServer)
+		if endpoint == "" {
+			endpoint = strings.TrimSpace(route.MQTTServer)
+		}
+	} else if endpoint == "" {
 		endpoint = strings.TrimSpace(route.WebSocketServer)
 	}
 	return normalizeThinQBroker(endpoint)

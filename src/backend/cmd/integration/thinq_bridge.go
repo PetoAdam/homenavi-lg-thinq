@@ -343,6 +343,34 @@ func (s *bridgeStore) get(deviceID string) (thinqDevice, bool) {
 	return d, true
 }
 
+func (s *bridgeStore) mergeState(deviceID string, patch any, timestamp string) (thinqDevice, bool) {
+	if s == nil {
+		return thinqDevice{}, false
+	}
+	id := strings.TrimSpace(deviceID)
+	if id == "" || patch == nil {
+		return thinqDevice{}, false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dev, ok := s.devices[id]
+	if !ok {
+		return thinqDevice{}, false
+	}
+	dev.State = mergeThinQDeviceState(dev.State, patch)
+	if ts := strings.TrimSpace(timestamp); ts != "" {
+		dev.State["timestamp"] = ts
+	}
+	dev.Online = true
+	s.devices[id] = dev
+
+	clone := dev
+	clone.State = cloneAnyMap(dev.State)
+	return clone, true
+}
+
 func (s *bridgeStore) list() []thinqDevice {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -636,6 +664,16 @@ func mapThinQToHDPState(d thinqDevice) map[string]any {
 			operationMode = strings.ToUpper(strings.TrimSpace(asString(rs["currentState"])))
 			runState = firstNonEmpty(normalizeWasherRunState(operationMode), runState)
 		}
+		if operationMode == "" {
+			if op, ok := src["operation"].(map[string]any); ok {
+				operationMode = strings.ToUpper(strings.TrimSpace(asString(op["washerOperationMode"])))
+			} else if op, ok := state["operation"].(map[string]any); ok {
+				operationMode = strings.ToUpper(strings.TrimSpace(asString(op["washerOperationMode"])))
+			}
+			if operationMode != "" {
+				runState = firstNonEmpty(normalizeWasherRunState(operationMode), runState)
+			}
+		}
 		out["run_state"] = runState
 		if operationMode == "" {
 			switch {
@@ -920,9 +958,119 @@ func cloneAnyMap(in map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(in))
 	for k, v := range in {
-		out[k] = v
+		out[k] = cloneAnyValue(v)
 	}
 	return out
+}
+
+func cloneAnySlice(in []any) []any {
+	if in == nil {
+		return nil
+	}
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		out = append(out, cloneAnyValue(v))
+	}
+	return out
+}
+
+func cloneAnyValue(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		return cloneAnyMap(t)
+	case []any:
+		return cloneAnySlice(t)
+	default:
+		return t
+	}
+}
+
+func mergeThinQDeviceState(existing map[string]any, patch any) map[string]any {
+	out := cloneAnyMap(existing)
+	if out == nil {
+		out = map[string]any{}
+	}
+	switch t := patch.(type) {
+	case map[string]any:
+		normalized := normalizeThinQRealtimePatchMap(t)
+		out = deepMergeAnyMap(out, normalized)
+		mirrorThinQRealtimePatch(out, normalized)
+	case []any:
+		out["response"] = cloneAnySlice(t)
+	}
+	return out
+}
+
+func normalizeThinQRealtimePatchMap(in map[string]any) map[string]any {
+	out := cloneAnyMap(in)
+	if out == nil {
+		out = map[string]any{}
+	}
+	if _, ok := out["runState"].(map[string]any); !ok {
+		if op, ok := out["operation"].(map[string]any); ok {
+			mode := strings.TrimSpace(asString(op["washerOperationMode"]))
+			if mode == "" {
+				mode = strings.TrimSpace(asString(op["dryerOperationMode"]))
+			}
+			if mode != "" {
+				out["runState"] = map[string]any{"currentState": strings.ToUpper(mode)}
+			}
+		}
+	}
+	return out
+}
+
+func deepMergeAnyMap(dst map[string]any, src map[string]any) map[string]any {
+	out := cloneAnyMap(dst)
+	if out == nil {
+		out = map[string]any{}
+	}
+	for key, value := range src {
+		switch typed := value.(type) {
+		case map[string]any:
+			if cur, ok := out[key].(map[string]any); ok {
+				out[key] = deepMergeAnyMap(cur, typed)
+			} else {
+				out[key] = cloneAnyMap(typed)
+			}
+		case []any:
+			out[key] = cloneAnySlice(typed)
+		default:
+			out[key] = typed
+		}
+	}
+	return out
+}
+
+func mirrorThinQRealtimePatch(state map[string]any, patch map[string]any) {
+	if state == nil || patch == nil || len(patch) == 0 {
+		return
+	}
+	locationName := ""
+	if loc, ok := patch["location"].(map[string]any); ok {
+		locationName = strings.TrimSpace(asString(loc["locationName"]))
+	}
+	response, _ := state["response"].([]any)
+	if len(response) == 0 {
+		response = []any{map[string]any{}}
+	}
+	idx := 0
+	if locationName != "" {
+		for i, item := range response {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			loc, _ := entry["location"].(map[string]any)
+			if strings.EqualFold(strings.TrimSpace(asString(loc["locationName"])), locationName) {
+				idx = i
+				break
+			}
+		}
+	}
+	entry, _ := response[idx].(map[string]any)
+	response[idx] = deepMergeAnyMap(entry, patch)
+	state["response"] = response
 }
 
 func asString(v any) string {
