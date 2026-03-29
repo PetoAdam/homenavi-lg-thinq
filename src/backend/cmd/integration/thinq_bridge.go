@@ -805,11 +805,20 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 			return thinqCommand{}, fmt.Errorf("unsupported tv command")
 		}
 	case "washer":
-		_, available, locationName := washerOperationProfile(d)
+		ctrlKey, available, locationName := washerOperationProfile(d)
+		ctrlKey = firstNonEmpty(strings.TrimSpace(ctrlKey), "washerOperationMode")
 		mkPayload := func(mode string) map[string]any {
 			return map[string]any{
 				"location":  map[string]any{"locationName": locationName},
 				"operation": map[string]any{"washerOperationMode": mode},
+			}
+		}
+		mkCommand := func(name, mode string) thinqCommand {
+			return thinqCommand{
+				Name:    name,
+				CtrlKey: ctrlKey,
+				Command: mode,
+				Params:  mkPayload(mode),
 			}
 		}
 		switch {
@@ -817,24 +826,24 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 			if len(available) > 0 && !available["START"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
-			return thinqCommand{Name: "start", Params: mkPayload("START")}, nil
+			return mkCommand("start", "START"), nil
 		case cmdName == "stop" || asBool(args["stop"]):
 			if len(available) > 0 && !available["STOP"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
-			return thinqCommand{Name: "stop", Params: mkPayload("STOP")}, nil
+			return mkCommand("stop", "STOP"), nil
 		case cmdName == "set_power" || cmdName == "power" || hasKey(args, "power"):
 			target := normalizePower(args["power"])
 			if target == "on" {
 				if len(available) > 0 && !available["POWER_ON"] {
 					return thinqCommand{}, fmt.Errorf("unsupported washer command")
 				}
-				return thinqCommand{Name: "set_power", Params: mkPayload("POWER_ON")}, nil
+				return mkCommand("set_power", "POWER_ON"), nil
 			}
 			if len(available) > 0 && !available["POWER_OFF"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
-			return thinqCommand{Name: "set_power", Params: mkPayload("POWER_OFF")}, nil
+			return mkCommand("set_power", "POWER_OFF"), nil
 		case cmdName == "set_operation_mode" || hasKey(args, "operation_mode"):
 			mode := strings.ToUpper(strings.TrimSpace(asString(args["operation_mode"])))
 			if mode == "" {
@@ -843,7 +852,7 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 			if len(available) > 0 && !available[mode] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
-			return thinqCommand{Name: "set_operation_mode", Params: mkPayload(mode)}, nil
+			return mkCommand("set_operation_mode", mode), nil
 		default:
 			return thinqCommand{}, fmt.Errorf("unsupported washer command")
 		}

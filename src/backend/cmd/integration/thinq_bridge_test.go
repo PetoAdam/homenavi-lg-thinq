@@ -106,6 +106,12 @@ func TestTranslateWasherCommand(t *testing.T) {
 	if cmd.Name != "start" {
 		t.Fatalf("expected start, got %s", cmd.Name)
 	}
+	if cmd.CtrlKey != "washerOperationMode" {
+		t.Fatalf("expected ctrl key washerOperationMode, got %#v", cmd.CtrlKey)
+	}
+	if cmd.Command != "START" {
+		t.Fatalf("expected command START, got %#v", cmd.Command)
+	}
 	location, ok := cmd.Params["location"].(map[string]any)
 	if !ok || location["locationName"] != "MAIN" {
 		t.Fatalf("expected location MAIN, got %#v", cmd.Params["location"])
@@ -138,9 +144,45 @@ func TestTranslateWasherNativeSetStateOperationMode(t *testing.T) {
 	if cmd.Name != "set_operation_mode" {
 		t.Fatalf("expected set_operation_mode, got %s", cmd.Name)
 	}
+	if cmd.CtrlKey != "washerOperationMode" {
+		t.Fatalf("expected ctrl key washerOperationMode, got %#v", cmd.CtrlKey)
+	}
+	if cmd.Command != "START" {
+		t.Fatalf("expected command START, got %#v", cmd.Command)
+	}
 	operation, ok := cmd.Params["operation"].(map[string]any)
 	if !ok || operation["washerOperationMode"] != "START" {
 		t.Fatalf("expected operation START, got %#v", cmd.Params["operation"])
+	}
+}
+
+func TestTranslateWasherNativeSetStatePowerCommandUsesOperationCtrl(t *testing.T) {
+	d := thinqDevice{
+		ID:   "washer-1",
+		Type: "washer",
+		State: map[string]any{
+			"response": []any{map[string]any{"location": map[string]any{"locationName": "MAIN"}}},
+			"profile": map[string]any{
+				"property": []any{map[string]any{
+					"operation": map[string]any{
+						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
+					},
+				}},
+			},
+		},
+	}
+	cmd, err := translateHDPCommand(d, "set_state", map[string]any{"power": "on"})
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if cmd.Name != "set_power" {
+		t.Fatalf("expected set_power, got %s", cmd.Name)
+	}
+	if cmd.CtrlKey != "washerOperationMode" {
+		t.Fatalf("expected ctrl key washerOperationMode, got %#v", cmd.CtrlKey)
+	}
+	if cmd.Command != "POWER_ON" {
+		t.Fatalf("expected command POWER_ON, got %#v", cmd.Command)
 	}
 }
 

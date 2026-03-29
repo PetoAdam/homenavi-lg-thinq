@@ -14,7 +14,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +44,8 @@ type thinQCertInfo struct {
 	Subscriptions  []string
 	ExpiresAt      time.Time
 }
+
+const defaultThinQRealtimeSyncMinInterval = 5 * time.Second
 
 func newThinQRealtimeBridge(setup *setupStore, provider *cloudThinQProvider) *thinQRealtimeBridge {
 	return &thinQRealtimeBridge{setup: setup, provider: provider}
@@ -109,11 +113,7 @@ func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, l
 		logWarnf("thinq realtime event subscription check failed err=%v", err)
 	}
 
-	endpoint := strings.TrimSpace(route.MQTTServer)
-	if cfg.RealtimeTransport == "ws" {
-		endpoint = strings.TrimSpace(route.WebSocketServer)
-	}
-	endpoint = normalizeThinQBroker(endpoint)
+	endpoint := realtimeEndpointForRoute(route, cfg.RealtimeTransport)
 	if endpoint == "" {
 		return fmt.Errorf("realtime endpoint missing for transport=%s", cfg.RealtimeTransport)
 	}
@@ -225,16 +225,44 @@ func (b *thinQRealtimeBridge) handleRealtimeMessage(cfg setupConfig, localMQTT m
 	}
 
 	if syncNow != nil {
-		select {
-		case syncNow <- struct{}{}:
-			logDebugf("thinq realtime sync requested topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
-		default:
-			logDebugf("thinq realtime sync already queued topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
+		now := time.Now()
+		if b.allowRealtimeSync(now) {
+			select {
+			case syncNow <- struct{}{}:
+				logDebugf("thinq realtime sync requested topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
+			default:
+				logDebugf("thinq realtime sync already queued topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
+			}
+		} else {
+			logDebugf("thinq realtime sync throttled topic=%s device_id=%s transport=%s", msg.Topic(), sanitizeDeviceID(deviceID), cfg.RealtimeTransport)
 		}
 	}
+}
+
+func (b *thinQRealtimeBridge) allowRealtimeSync(now time.Time) bool {
+	if b == nil {
+		return true
+	}
+	interval := thinQRealtimeSyncMinInterval()
 	b.mu.Lock()
-	b.lastSyncPulse = time.Now()
-	b.mu.Unlock()
+	defer b.mu.Unlock()
+	if !b.lastSyncPulse.IsZero() && now.Sub(b.lastSyncPulse) < interval {
+		return false
+	}
+	b.lastSyncPulse = now
+	return true
+}
+
+func thinQRealtimeSyncMinInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("LG_THINQ_REALTIME_SYNC_MIN_SEC"))
+	if raw == "" {
+		return defaultThinQRealtimeSyncMinInterval
+	}
+	sec, err := strconv.Atoi(raw)
+	if err != nil || sec <= 0 {
+		return defaultThinQRealtimeSyncMinInterval
+	}
+	return time.Duration(sec) * time.Second
 }
 
 func (b *thinQRealtimeBridge) fetchRoute(ctx context.Context, cfg setupConfig) (thinQRouteInfo, error) {
@@ -243,10 +271,7 @@ func (b *thinQRealtimeBridge) fetchRoute(ctx context.Context, cfg setupConfig) (
 	if err != nil {
 		return thinQRouteInfo{}, err
 	}
-	req.Header.Set("x-message-id", thinQMessageID())
-	req.Header.Set("x-country", strings.ToUpper(strings.TrimSpace(cfg.Country)))
-	req.Header.Set("x-service-phase", firstNonEmpty(strings.TrimSpace(cfg.ServicePhase), "OP"))
-	req.Header.Set("x-api-key", strings.TrimSpace(cfg.APIKey))
+	b.provider.applyHeaders(req, cfg)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := b.provider.client.Do(req)
@@ -261,12 +286,20 @@ func (b *thinQRealtimeBridge) fetchRoute(ctx context.Context, cfg setupConfig) (
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return thinQRouteInfo{}, err
 	}
-	response, _ := payload["response"].(map[string]any)
+	response := unwrapThinQPayload(payload)
 	return thinQRouteInfo{
-		APIServer:       strings.TrimSpace(asString(response["apiServer"])),
-		MQTTServer:      strings.TrimSpace(asString(response["mqttServer"])),
-		WebSocketServer: strings.TrimSpace(asString(response["webSocketServer"])),
+		APIServer:       firstNonEmpty(strings.TrimSpace(asString(response["apiServer"])), strings.TrimSpace(asString(response["api_server"]))),
+		MQTTServer:      firstNonEmpty(strings.TrimSpace(asString(response["mqttServer"])), strings.TrimSpace(asString(response["mqtt_server"]))),
+		WebSocketServer: firstNonEmpty(strings.TrimSpace(asString(response["webSocketServer"])), strings.TrimSpace(asString(response["websocketServer"])), strings.TrimSpace(asString(response["web_socket_server"]))),
 	}, nil
+}
+
+func realtimeEndpointForRoute(route thinQRouteInfo, transport string) string {
+	endpoint := strings.TrimSpace(route.MQTTServer)
+	if strings.EqualFold(strings.TrimSpace(transport), "ws") {
+		endpoint = strings.TrimSpace(route.WebSocketServer)
+	}
+	return normalizeThinQBroker(endpoint)
 }
 
 func (b *thinQRealtimeBridge) ensureClientCertificate(ctx context.Context, cfg setupConfig) (setupConfig, thinQCertInfo, error) {

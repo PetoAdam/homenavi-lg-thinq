@@ -1121,6 +1121,9 @@ func publishDeviceState(cli mqtt.Client, dev thinqDevice, gate *commandStateGate
 		}
 	}
 	payload := map[string]any{"type": "state", "device_id": sanitizeDeviceID(dev.ID), "state": state}
+	if pendingBefore != nil && strings.TrimSpace(pendingBefore.Corr) != "" {
+		payload["corr"] = strings.TrimSpace(pendingBefore.Corr)
+	}
 	publishJSON(cli, hdpStateTopic+sanitizeDeviceID(dev.ID), true, payload)
 	if pendingBefore == nil || strings.TrimSpace(pendingBefore.Corr) == "" {
 		return nil
