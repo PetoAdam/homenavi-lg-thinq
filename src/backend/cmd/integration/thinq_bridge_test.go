@@ -408,6 +408,43 @@ func TestCloudProviderListDevicesUsesConfiguredCountryOnly(t *testing.T) {
 	}
 }
 
+func TestCloudProviderVerifyLoginUsesOnlyDeviceList(t *testing.T) {
+	t.Parallel()
+	seen := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.Method+" "+r.URL.Path]++
+		if r.URL.Path != "/devices" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":{"devices":[{"deviceId":"dev-1"},{"deviceId":"dev-2"}]}}`))
+	}))
+	defer srv.Close()
+
+	provider := newCloudThinQProvider()
+	provider.client = srv.Client()
+	cfg := applySetupDefaults(setupConfig{
+		PATToken:      "test-pat",
+		APIBaseURL:    srv.URL,
+		Country:       "HU",
+		AccountRegion: "eu",
+	})
+
+	count, err := provider.VerifyLogin(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("verify login failed: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected 2 devices, got %d", count)
+	}
+	if seen[http.MethodGet+" /devices"] != 1 {
+		t.Fatalf("expected exactly one device-list request, got %v", seen)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("expected no state/profile calls during verify, got %v", seen)
+	}
+}
+
 func TestParseThinQAPIErrorKeepsMessageAndCode(t *testing.T) {
 	t.Parallel()
 

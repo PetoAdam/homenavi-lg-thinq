@@ -50,7 +50,7 @@ func newCloudThinQProvider() *cloudThinQProvider {
 
 func (p *cloudThinQProvider) Name() string { return "cloud" }
 
-func (p *cloudThinQProvider) ListDevices(ctx context.Context, cfg setupConfig) ([]thinqDevice, error) {
+func (p *cloudThinQProvider) fetchDeviceEntries(ctx context.Context, cfg setupConfig) ([]map[string]any, error) {
 	base := normalizeAPIBaseURL(cfg.APIBaseURL, cfg.AccountRegion)
 	if strings.TrimSpace(cfg.PATToken) == "" {
 		return nil, fmt.Errorf("pat_token is required")
@@ -79,22 +79,43 @@ func (p *cloudThinQProvider) ListDevices(ctx context.Context, cfg setupConfig) (
 		logWarnf("thinq list devices non-2xx country=%s status=%d err=%v", country, status, apiErr)
 		return nil, apiErr
 	}
+	defer resp.Body.Close()
 	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		_ = resp.Body.Close()
 		logWarnf("thinq list devices decode failed country=%s err=%v", country, err)
 		return nil, err
 	}
-	_ = resp.Body.Close()
 	logInfof("thinq list devices success country=%s", country)
 	body := unwrapThinQPayload(payload)
 	items := extractThinQItems(body)
-	devices := make([]thinqDevice, 0, len(items))
+	entries := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
+		entries = append(entries, cloneAnyMap(m))
+	}
+	return entries, nil
+}
+
+func (p *cloudThinQProvider) VerifyLogin(ctx context.Context, cfg setupConfig) (int, error) {
+	entries, err := p.fetchDeviceEntries(ctx, cfg)
+	if err != nil {
+		return 0, err
+	}
+	return len(entries), nil
+}
+
+func (p *cloudThinQProvider) ListDevices(ctx context.Context, cfg setupConfig) ([]thinqDevice, error) {
+	base := normalizeAPIBaseURL(cfg.APIBaseURL, cfg.AccountRegion)
+	items, err := p.fetchDeviceEntries(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	devices := make([]thinqDevice, 0, len(items))
+	for _, item := range items {
+		m := item
 		deviceInfo, _ := m["deviceInfo"].(map[string]any)
 		id := firstNonEmpty(asString(m["deviceId"]), asString(m["id"]))
 		if id == "" {

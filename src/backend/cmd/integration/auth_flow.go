@@ -386,6 +386,12 @@ func verifyThinQLogin(ctx context.Context, cfg setupConfig, provider thinqProvid
 	if provider == nil {
 		return 0, fmt.Errorf("provider not configured")
 	}
+	type thinqLoginVerifier interface {
+		VerifyLogin(context.Context, setupConfig) (int, error)
+	}
+	if verifier, ok := provider.(thinqLoginVerifier); ok {
+		return verifier.VerifyLogin(ctx, cfg)
+	}
 	devices, err := provider.ListDevices(ctx, cfg)
 	if err != nil {
 		return 0, err
