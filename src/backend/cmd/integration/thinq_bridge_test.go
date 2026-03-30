@@ -461,3 +461,19 @@ func TestParseThinQAPIErrorKeepsMessageAndCode(t *testing.T) {
 		t.Fatalf("expected preserved API details, got=%s", msg)
 	}
 }
+
+func TestProviderHTTPStatusUsesThinQStatusForClientErrors(t *testing.T) {
+	t.Parallel()
+	err := &thinQAPIError{Status: http.StatusUnauthorized, Code: "1307", Message: "Not supported country"}
+	if got := providerHTTPStatus(err, http.StatusBadGateway); got != http.StatusUnauthorized {
+		t.Fatalf("expected 401 passthrough, got %d", got)
+	}
+	err = &thinQAPIError{Status: http.StatusTooManyRequests, Code: "1314", Message: "Exceeded User API calls"}
+	if got := providerHTTPStatus(err, http.StatusBadGateway); got != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 passthrough, got %d", got)
+	}
+	err = &thinQAPIError{Status: http.StatusInternalServerError, Message: "upstream error"}
+	if got := providerHTTPStatus(err, http.StatusBadGateway); got != http.StatusBadGateway {
+		t.Fatalf("expected fallback 502 for upstream 5xx, got %d", got)
+	}
+}

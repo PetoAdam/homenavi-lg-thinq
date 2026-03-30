@@ -1415,6 +1415,24 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg, "code": status})
 }
 
+func providerHTTPStatus(err error, fallback int) int {
+	if fallback < 400 {
+		fallback = http.StatusBadGateway
+	}
+	var apiErr *thinQAPIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return fallback
+	}
+	status := apiErr.Status
+	if status == http.StatusTooManyRequests {
+		return status
+	}
+	if status >= 400 && status < 500 {
+		return status
+	}
+	return fallback
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -1734,7 +1752,7 @@ func main() {
 			if verifyErr != nil {
 				logWarnf("api setup pat verify failed err=%v", verifyErr)
 				authMgr.set(authStatus{Success: false, Provider: "pat", Message: "PAT verify failed: " + verifyErr.Error(), Time: time.Now().UTC(), Mode: payload.Mode})
-				writeJSONError(w, http.StatusBadGateway, "PAT token verification failed: "+verifyErr.Error())
+				writeJSONError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "PAT token verification failed: "+verifyErr.Error())
 				return
 			}
 			logInfof("api setup pat verified devices=%d", count)
@@ -1824,7 +1842,7 @@ func main() {
 		if verifyErr != nil {
 			logWarnf("api auth login verify failed err=%v", verifyErr)
 			authMgr.set(authStatus{Success: false, Provider: "pat", Message: "token saved but verify failed: " + verifyErr.Error(), Time: time.Now().UTC(), Mode: cfg.Mode})
-			writeJSONError(w, http.StatusBadGateway, "PAT token saved but verification failed: "+verifyErr.Error())
+			writeJSONError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "PAT token saved but verification failed: "+verifyErr.Error())
 			return
 		}
 		logInfof("api auth login verified devices=%d", count)
@@ -1851,7 +1869,7 @@ func main() {
 		if err != nil {
 			logWarnf("api auth verify failed err=%v", err)
 			authMgr.set(authStatus{Success: false, Provider: cloudProvider.Name(), Message: err.Error(), Time: time.Now().UTC(), Mode: cfg.Mode})
-			writeJSONError(w, http.StatusBadGateway, "verification failed: "+err.Error())
+			writeJSONError(w, providerHTTPStatus(err, http.StatusBadGateway), "verification failed: "+err.Error())
 			return
 		}
 		logInfof("api auth verify succeeded devices=%d", count)
@@ -1947,7 +1965,7 @@ func main() {
 		if err := cloudProvider.SendCommand(r.Context(), cfg, deviceID, cmd); err != nil {
 			logWarnf("api device-command provider failed id=%s command=%s err=%v", deviceID, cmd.Name, err)
 			stateGate.cancel(deviceID, corr)
-			writeJSONError(w, http.StatusBadGateway, err.Error())
+			writeJSONError(w, providerHTTPStatus(err, http.StatusBadGateway), err.Error())
 			return
 		}
 		stateGate.extendFreeze(deviceID, corr, commandStateGatePostGrace)
