@@ -178,14 +178,12 @@ func (p *cloudThinQProvider) SendCommand(ctx context.Context, cfg setupConfig, d
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	if strings.TrimSpace(cmd.CtrlKey) != "" || strings.TrimSpace(cmd.Command) != "" {
+	if len(payload) == 0 && (strings.TrimSpace(cmd.CtrlKey) != "" || strings.TrimSpace(cmd.Command) != "") {
 		ctrlKey := firstNonEmpty(strings.TrimSpace(cmd.CtrlKey), strings.TrimSpace(cmd.Name))
 		command := firstNonEmpty(strings.TrimSpace(cmd.Command), strings.TrimSpace(cmd.Name))
 		payload = map[string]any{
-			"ctrlKey":     ctrlKey,
-			"command":     command,
-			"data":        cloneAnyMap(cmd.Params),
-			"dataSetList": []any{cloneAnyMap(cmd.Params)},
+			"ctrlKey": ctrlKey,
+			"command": command,
 		}
 	}
 	body, _ := json.Marshal(payload)
@@ -566,6 +564,14 @@ func washerOperationModes(available map[string]bool) []string {
 	return modes
 }
 
+func washerRemoteControlEnabled(d thinqDevice) bool {
+	state := mapThinQToHDPState(d)
+	if enabled, ok := state["remote_control_enabled"].(bool); ok {
+		return enabled
+	}
+	return true
+}
+
 func mapThinQInputs(caps []map[string]any, d thinqDevice) []map[string]any {
 	hasID := func(id string) bool {
 		for _, c := range caps {
@@ -603,18 +609,24 @@ func mapThinQInputs(caps []map[string]any, d thinqDevice) []map[string]any {
 	if hasID("appliance.washer.control") {
 		_, available, _ := washerOperationProfile(d)
 		modes := washerOperationModes(available)
-		if available["START"] {
+		remoteEnabled := washerRemoteControlEnabled(d)
+		if available["START"] && remoteEnabled {
 			inputs = append(inputs, map[string]any{"id": "start", "label": "Start", "type": "button", "capability_id": "appliance.washer.control", "property": "start"})
 		}
 		if available["STOP"] {
 			inputs = append(inputs, map[string]any{"id": "stop", "label": "Stop", "type": "button", "capability_id": "appliance.washer.control", "property": "stop"})
 		}
-		if len(modes) > 0 {
+		if len(modes) > 0 && remoteEnabled {
 			options := make([]map[string]any, 0, len(modes))
 			for _, mode := range modes {
+				if strings.HasPrefix(mode, "POWER_") {
+					continue
+				}
 				options = append(options, map[string]any{"value": mode, "label": strings.ReplaceAll(strings.Title(strings.ToLower(mode)), "_", " ")})
 			}
-			inputs = append(inputs, map[string]any{"id": "set_operation_mode", "label": "Set Operation", "type": "select", "capability_id": "appliance.washer.control", "property": "operation_mode", "options": options})
+			if len(options) > 0 {
+				inputs = append(inputs, map[string]any{"id": "set_operation_mode", "label": "Set Operation", "type": "select", "capability_id": "appliance.washer.control", "property": "operation_mode", "options": options})
+			}
 		}
 	}
 	if hasID("switch") {
@@ -866,6 +878,7 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 	case "washer":
 		ctrlKey, available, locationName := washerOperationProfile(d)
 		ctrlKey = firstNonEmpty(strings.TrimSpace(ctrlKey), "washerOperationMode")
+		remoteEnabled := washerRemoteControlEnabled(d)
 		mkPayload := func(mode string) map[string]any {
 			return map[string]any{
 				"location":  map[string]any{"locationName": locationName},
@@ -882,6 +895,9 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 		}
 		switch {
 		case cmdName == "start" || asBool(args["start"]):
+			if !remoteEnabled {
+				return thinqCommand{}, fmt.Errorf("washer remote control is off; start is unavailable")
+			}
 			if len(available) > 0 && !available["START"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
@@ -904,6 +920,9 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 			}
 			return mkCommand("set_power", "POWER_OFF"), nil
 		case cmdName == "set_operation_mode" || hasKey(args, "operation_mode"):
+			if !remoteEnabled {
+				return thinqCommand{}, fmt.Errorf("washer remote control is off; program changes are unavailable")
+			}
 			mode := strings.ToUpper(strings.TrimSpace(asString(args["operation_mode"])))
 			if mode == "" {
 				return thinqCommand{}, fmt.Errorf("missing operation_mode")

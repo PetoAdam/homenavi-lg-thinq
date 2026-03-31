@@ -10,6 +10,26 @@ import (
 	"testing"
 )
 
+func testWasherDevice(remoteEnabled bool) thinqDevice {
+	return thinqDevice{
+		ID:   "washer-1",
+		Type: "washer",
+		State: map[string]any{
+			"response": []any{map[string]any{
+				"location":            map[string]any{"locationName": "MAIN"},
+				"remoteControlEnable": map[string]any{"remoteControlEnabled": remoteEnabled},
+			}},
+			"profile": map[string]any{
+				"property": []any{map[string]any{
+					"operation": map[string]any{
+						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
+					},
+				}},
+			},
+		},
+	}
+}
+
 func TestMapThinQToHDPStateTV(t *testing.T) {
 	d := thinqDevice{
 		ID:     "tv-1",
@@ -114,20 +134,7 @@ func TestTranslateTVNativeSetStatePowerCommand(t *testing.T) {
 }
 
 func TestTranslateWasherCommand(t *testing.T) {
-	d := thinqDevice{
-		ID:   "washer-1",
-		Type: "washer",
-		State: map[string]any{
-			"response": []any{map[string]any{"location": map[string]any{"locationName": "MAIN"}}},
-			"profile": map[string]any{
-				"property": []any{map[string]any{
-					"operation": map[string]any{
-						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
-					},
-				}},
-			},
-		},
-	}
+	d := testWasherDevice(true)
 	cmd, err := translateHDPCommand(d, "start", map[string]any{})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -152,20 +159,7 @@ func TestTranslateWasherCommand(t *testing.T) {
 }
 
 func TestTranslateWasherNativeSetStateOperationMode(t *testing.T) {
-	d := thinqDevice{
-		ID:   "washer-1",
-		Type: "washer",
-		State: map[string]any{
-			"response": []any{map[string]any{"location": map[string]any{"locationName": "MAIN"}}},
-			"profile": map[string]any{
-				"property": []any{map[string]any{
-					"operation": map[string]any{
-						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
-					},
-				}},
-			},
-		},
-	}
+	d := testWasherDevice(true)
 	cmd, err := translateHDPCommand(d, "set_state", map[string]any{"operation_mode": "START"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -186,20 +180,7 @@ func TestTranslateWasherNativeSetStateOperationMode(t *testing.T) {
 }
 
 func TestTranslateWasherNativeSetStatePowerCommandUsesOperationCtrl(t *testing.T) {
-	d := thinqDevice{
-		ID:   "washer-1",
-		Type: "washer",
-		State: map[string]any{
-			"response": []any{map[string]any{"location": map[string]any{"locationName": "MAIN"}}},
-			"profile": map[string]any{
-				"property": []any{map[string]any{
-					"operation": map[string]any{
-						"washerOperationMode": map[string]any{"value": map[string]any{"w": []any{"START", "STOP", "POWER_ON", "POWER_OFF"}}},
-					},
-				}},
-			},
-		},
-	}
+	d := testWasherDevice(false)
 	cmd, err := translateHDPCommand(d, "set_state", map[string]any{"power": "on"})
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
@@ -212,6 +193,41 @@ func TestTranslateWasherNativeSetStatePowerCommandUsesOperationCtrl(t *testing.T
 	}
 	if cmd.Command != "POWER_ON" {
 		t.Fatalf("expected command POWER_ON, got %#v", cmd.Command)
+	}
+}
+
+func TestTranslateWasherStartBlockedWhenRemoteControlOff(t *testing.T) {
+	d := testWasherDevice(false)
+	_, err := translateHDPCommand(d, "start", map[string]any{})
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "remote control is off") {
+		t.Fatalf("expected remote control error, got %v", err)
+	}
+}
+
+func TestMapThinQInputsWasherKeepsPowerWhenRemoteControlOff(t *testing.T) {
+	d := testWasherDevice(false)
+	inputs := mapThinQInputs(mapThinQCapabilities(d), d)
+	hasPower := false
+	hasStart := false
+	hasMode := false
+	for _, input := range inputs {
+		switch input["id"] {
+		case "set_power":
+			hasPower = true
+		case "start":
+			hasStart = true
+		case "set_operation_mode":
+			hasMode = true
+		}
+	}
+	if !hasPower {
+		t.Fatalf("expected set_power input to remain available")
+	}
+	if hasStart {
+		t.Fatalf("did not expect start input when remote control is off")
+	}
+	if hasMode {
+		t.Fatalf("did not expect set_operation_mode input when remote control is off")
 	}
 }
 
@@ -305,11 +321,16 @@ func TestCloudProviderControlAndStatePathsFollowOpenAPI(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode control payload: %v", err)
 			}
-			if payload["ctrlKey"] != "washerOperationMode" {
-				t.Fatalf("unexpected ctrlKey: %#v", payload["ctrlKey"])
+			operation, ok := payload["operation"].(map[string]any)
+			if !ok || operation["washerOperationMode"] != "POWER_ON" {
+				t.Fatalf("unexpected operation payload: %#v", payload["operation"])
 			}
-			if payload["command"] != "POWER_ON" {
-				t.Fatalf("unexpected command: %#v", payload["command"])
+			location, ok := payload["location"].(map[string]any)
+			if !ok || location["locationName"] != "MAIN" {
+				t.Fatalf("unexpected location payload: %#v", payload["location"])
+			}
+			if _, ok := payload["ctrlKey"]; ok {
+				t.Fatalf("did not expect ctrlKey wrapper in payload: %#v", payload)
 			}
 			if got := r.Header.Get("x-country"); got != "HU" {
 				t.Fatalf("unexpected x-country: %q", got)
@@ -343,7 +364,10 @@ func TestCloudProviderControlAndStatePathsFollowOpenAPI(t *testing.T) {
 		Name:    "set_power",
 		CtrlKey: "washerOperationMode",
 		Command: "POWER_ON",
-		Params:  map[string]any{"location": "MAIN"},
+		Params: map[string]any{
+			"location":  map[string]any{"locationName": "MAIN"},
+			"operation": map[string]any{"washerOperationMode": "POWER_ON"},
+		},
 	}
 	if err := provider.SendCommand(context.Background(), cfg, "dev-1", cmd); err != nil {
 		t.Fatalf("send command failed: %v", err)
