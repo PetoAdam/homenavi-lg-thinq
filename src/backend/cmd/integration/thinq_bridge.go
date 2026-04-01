@@ -609,14 +609,13 @@ func mapThinQInputs(caps []map[string]any, d thinqDevice) []map[string]any {
 	if hasID("appliance.washer.control") {
 		_, available, _ := washerOperationProfile(d)
 		modes := washerOperationModes(available)
-		remoteEnabled := washerRemoteControlEnabled(d)
-		if available["START"] && remoteEnabled {
+		if available["START"] {
 			inputs = append(inputs, map[string]any{"id": "start", "label": "Start", "type": "button", "capability_id": "appliance.washer.control", "property": "start"})
 		}
 		if available["STOP"] {
 			inputs = append(inputs, map[string]any{"id": "stop", "label": "Stop", "type": "button", "capability_id": "appliance.washer.control", "property": "stop"})
 		}
-		if len(modes) > 0 && remoteEnabled {
+		if len(modes) > 0 {
 			options := make([]map[string]any, 0, len(modes))
 			for _, mode := range modes {
 				if strings.HasPrefix(mode, "POWER_") {

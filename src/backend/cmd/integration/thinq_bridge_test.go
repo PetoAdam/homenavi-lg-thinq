@@ -204,7 +204,7 @@ func TestTranslateWasherStartBlockedWhenRemoteControlOff(t *testing.T) {
 	}
 }
 
-func TestMapThinQInputsWasherKeepsPowerWhenRemoteControlOff(t *testing.T) {
+func TestMapThinQInputsWasherShowsProgramControlsWhenRemoteControlOff(t *testing.T) {
 	d := testWasherDevice(false)
 	inputs := mapThinQInputs(mapThinQCapabilities(d), d)
 	hasPower := false
@@ -223,11 +223,11 @@ func TestMapThinQInputsWasherKeepsPowerWhenRemoteControlOff(t *testing.T) {
 	if !hasPower {
 		t.Fatalf("expected set_power input to remain available")
 	}
-	if hasStart {
-		t.Fatalf("did not expect start input when remote control is off")
+	if !hasStart {
+		t.Fatalf("expected start input to remain visible")
 	}
-	if hasMode {
-		t.Fatalf("did not expect set_operation_mode input when remote control is off")
+	if !hasMode {
+		t.Fatalf("expected set_operation_mode input to remain visible")
 	}
 }
 
