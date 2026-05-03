@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Homenavi release
-        uses: PetoAdam/homenavi/.github/actions/integration-release@feature/helm_support
+        uses: PetoAdam/homenavi/.github/actions/integration-release@main
         with:
           image_name: homenavi-lg-thinq
           ghcr_username: ${{ github.actor }}

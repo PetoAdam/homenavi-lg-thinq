@@ -35,7 +35,7 @@ docker run -d \
 	--network homenavi-network \
 	-p 8099:8099 \
 	-e PORT=8099 \
-	-e MQTT_BROKER_URL=mqtt://mosquitto:1883 \
+	-e MQTT_BROKER_URL=mqtt://emqx:1883 \
 	-e JWT_PUBLIC_KEY_PATH=/keys/jwt_public.pem \
 	-e LG_THINQ_SETUP_PATH=/app/secrets \
 	-v ${INTEGRATIONS_ROOT}/keys/jwt_public.pem:/keys/jwt_public.pem:ro \
