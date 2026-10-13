@@ -64,6 +64,33 @@ func TestThinQRealtimeBridge_HandleRealtimeMessageThrottlesSync(t *testing.T) {
 	}
 }
 
+func TestThinQRealtimeBridgeThrottlesEventSubscriptionReconciliation(t *testing.T) {
+	bridge := newThinQRealtimeBridge(nil, nil)
+	now := time.Date(2026, time.March, 30, 12, 0, 0, 0, time.UTC)
+
+	if !bridge.shouldReconcileEventSubscriptions(now) {
+		t.Fatal("expected first reconciliation to run")
+	}
+	if bridge.shouldReconcileEventSubscriptions(now.Add(defaultThinQSubscriptionReconciliationPeriod - time.Second)) {
+		t.Fatal("expected reconciliation inside the throttle interval to be skipped")
+	}
+	if !bridge.shouldReconcileEventSubscriptions(now.Add(defaultThinQSubscriptionReconciliationPeriod)) {
+		t.Fatal("expected reconciliation after the throttle interval to run")
+	}
+}
+
+func TestThinQRealtimeReconnectDelayBacksOffAndCaps(t *testing.T) {
+	if got := thinQRealtimeReconnectDelay(15, 1); got != 15*time.Second {
+		t.Fatalf("expected first retry delay of 15s, got %s", got)
+	}
+	if got := thinQRealtimeReconnectDelay(15, 3); got != time.Minute {
+		t.Fatalf("expected third retry delay of 1m, got %s", got)
+	}
+	if got := thinQRealtimeReconnectDelay(15, 10); got != 5*time.Minute {
+		t.Fatalf("expected retry delay to cap at 5m, got %s", got)
+	}
+}
+
 func TestRealtimeEndpointForRouteSupportsMQTTAndWS(t *testing.T) {
 	route := thinQRouteInfo{
 		MQTTServer:      "mqtts://mqtt.example.com:8883",

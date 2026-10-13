@@ -1415,6 +1415,50 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": msg, "code": status})
 }
 
+func writeThinQError(w http.ResponseWriter, status int, operation string, err error) {
+	message := "LG ThinQ request failed."
+	detail := "LG did not accept the request."
+	remediation := "Check the region, country, PAT, and API key, then retry."
+	providerCode := ""
+	upstreamStatus := 0
+
+	var apiErr *thinQAPIError
+	if errors.As(err, &apiErr) && apiErr != nil {
+		providerCode = strings.TrimSpace(apiErr.Code)
+		upstreamStatus = apiErr.Status
+		detail = strings.TrimSpace(apiErr.Message)
+		lowerDetail := strings.ToLower(detail)
+		switch {
+		case providerCode == "1314" || strings.Contains(lowerDetail, "exceeded user api calls"):
+			message = "LG ThinQ API quota exceeded."
+			detail = "LG temporarily rejected requests because this account has exceeded its API call allowance."
+			remediation = "Wait for LG's quota window to reset, then retry. Keep realtime updates disabled until the integration has been updated."
+		case providerCode == "1307" || strings.Contains(lowerDetail, "not supported country"):
+			message = "LG ThinQ does not support the selected country."
+			remediation = "Select the country registered for your LG ThinQ account, then retry."
+		case strings.Contains(lowerDetail, "permission") || strings.Contains(lowerDetail, "scope"):
+			message = "The LG ThinQ PAT is missing a required permission."
+			remediation = "Create a new PAT in the LG ThinQ PAT portal with the required permissions, then save it here."
+		case apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden:
+			message = "LG ThinQ rejected the PAT or application settings."
+			remediation = "Create a new PAT and confirm the selected region, country, and API key match your LG account."
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":           message,
+		"code":            status,
+		"detail":          detail,
+		"remediation":     remediation,
+		"operation":       operation,
+		"provider":        "lg_thinq",
+		"provider_code":   providerCode,
+		"upstream_status": upstreamStatus,
+	})
+}
+
 func providerHTTPStatus(err error, fallback int) int {
 	if fallback < 400 {
 		fallback = http.StatusBadGateway
@@ -1752,7 +1796,7 @@ func main() {
 			if verifyErr != nil {
 				logWarnf("api setup pat verify failed err=%v", verifyErr)
 				authMgr.set(authStatus{Success: false, Provider: "pat", Message: "PAT verify failed: " + verifyErr.Error(), Time: time.Now().UTC(), Mode: payload.Mode})
-				writeJSONError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "PAT token verification failed: "+verifyErr.Error())
+				writeThinQError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "setup verification", verifyErr)
 				return
 			}
 			logInfof("api setup pat verified devices=%d", count)
@@ -1842,7 +1886,7 @@ func main() {
 		if verifyErr != nil {
 			logWarnf("api auth login verify failed err=%v", verifyErr)
 			authMgr.set(authStatus{Success: false, Provider: "pat", Message: "token saved but verify failed: " + verifyErr.Error(), Time: time.Now().UTC(), Mode: cfg.Mode})
-			writeJSONError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "PAT token saved but verification failed: "+verifyErr.Error())
+			writeThinQError(w, providerHTTPStatus(verifyErr, http.StatusBadGateway), "PAT verification", verifyErr)
 			return
 		}
 		logInfof("api auth login verified devices=%d", count)
@@ -1869,7 +1913,7 @@ func main() {
 		if err != nil {
 			logWarnf("api auth verify failed err=%v", err)
 			authMgr.set(authStatus{Success: false, Provider: cloudProvider.Name(), Message: err.Error(), Time: time.Now().UTC(), Mode: cfg.Mode})
-			writeJSONError(w, providerHTTPStatus(err, http.StatusBadGateway), "verification failed: "+err.Error())
+			writeThinQError(w, providerHTTPStatus(err, http.StatusBadGateway), "stored PAT verification", err)
 			return
 		}
 		logInfof("api auth verify succeeded devices=%d", count)

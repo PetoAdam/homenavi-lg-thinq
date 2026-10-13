@@ -28,8 +28,9 @@ type thinQRealtimeBridge struct {
 	setup    *setupStore
 	provider *cloudThinQProvider
 
-	mu            sync.Mutex
-	lastSyncPulse time.Time
+	mu                           sync.Mutex
+	lastSyncPulse                time.Time
+	lastSubscriptionReconciliation time.Time
 }
 
 type thinQRouteInfo struct {
@@ -45,13 +46,18 @@ type thinQCertInfo struct {
 	ExpiresAt      time.Time
 }
 
-const defaultThinQRealtimeSyncMinInterval = 5 * time.Second
+const (
+	defaultThinQRealtimeSyncMinInterval          = 5 * time.Second
+	defaultThinQSubscriptionReconciliationPeriod = 30 * time.Minute
+	thinQRealtimeStableSessionDuration           = time.Minute
+)
 
 func newThinQRealtimeBridge(setup *setupStore, provider *cloudThinQProvider) *thinQRealtimeBridge {
 	return &thinQRealtimeBridge{setup: setup, provider: provider}
 }
 
 func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, store *bridgeStore, gate *commandStateGate) {
+	consecutiveFailures := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,6 +80,7 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 			continue
 		}
 
+		sessionStarted := time.Now()
 		err = b.runSession(ctx, cfg, localMQTT, syncNow, hub, store, gate)
 		if err != nil {
 			logWarnf("thinq realtime session ended err=%v", err)
@@ -81,14 +88,12 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 				hub.broadcast(map[string]any{"type": "thinq_realtime_disconnected", "error": err.Error(), "ts": time.Now().UTC().UnixMilli()})
 			}
 		}
+		if time.Since(sessionStarted) >= thinQRealtimeStableSessionDuration {
+			consecutiveFailures = 0
+		}
+		consecutiveFailures++
 
-		reconnect := time.Duration(cfg.RealtimeReconnectSec) * time.Second
-		if reconnect < 5*time.Second {
-			reconnect = 5 * time.Second
-		}
-		if reconnect > 5*time.Minute {
-			reconnect = 5 * time.Minute
-		}
+		reconnect := thinQRealtimeReconnectDelay(cfg.RealtimeReconnectSec, consecutiveFailures)
 		if !sleepWithContext(ctx, reconnect) {
 			return
 		}
@@ -109,8 +114,10 @@ func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, l
 	if err != nil {
 		return fmt.Errorf("ensure client certificate: %w", err)
 	}
-	if err := b.ensureEventSubscriptions(ctx, cfg); err != nil {
-		logWarnf("thinq realtime event subscription check failed err=%v", err)
+	if b.shouldReconcileEventSubscriptions(time.Now()) {
+		if err := b.ensureEventSubscriptions(ctx, cfg); err != nil {
+			logWarnf("thinq realtime event subscription check failed err=%v", err)
+		}
 	}
 
 	endpoint := realtimeEndpointForRoute(route, cfg.RealtimeTransport)
@@ -530,6 +537,36 @@ func (b *thinQRealtimeBridge) ensureEventSubscriptions(ctx context.Context, cfg 
 		}
 	}
 	return nil
+}
+
+func (b *thinQRealtimeBridge) shouldReconcileEventSubscriptions(now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.lastSubscriptionReconciliation.IsZero() && now.Sub(b.lastSubscriptionReconciliation) < defaultThinQSubscriptionReconciliationPeriod {
+		return false
+	}
+	b.lastSubscriptionReconciliation = now
+	return true
+}
+
+func thinQRealtimeReconnectDelay(reconnectSeconds, consecutiveFailures int) time.Duration {
+	base := time.Duration(reconnectSeconds) * time.Second
+	if base < 5*time.Second {
+		base = 5 * time.Second
+	}
+	if base > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	if consecutiveFailures < 1 {
+		consecutiveFailures = 1
+	}
+	for attempt := 1; attempt < consecutiveFailures && base < 5*time.Minute; attempt++ {
+		base *= 2
+	}
+	if base > 5*time.Minute {
+		return 5 * time.Minute
+	}
+	return base
 }
 
 func (b *thinQRealtimeBridge) fetchEventSubscriptions(ctx context.Context, cfg setupConfig) (map[string]struct{}, error) {

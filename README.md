@@ -94,6 +94,10 @@ After installation via Homenavi admin marketplace, open the installed integratio
 - CSP/headers hardened; no inline JS required.
 - Setup persistence uses restricted file mode (`0600`).
 
+## Setup diagnostics
+
+When PAT verification fails, the setup UI shows the LG error code and a safe remediation message. In particular, LG code `1314` means the account API-call quota is exhausted; wait for LG's quota window to reset and reduce or disable realtime retries before trying again. The UI distinguishes this from a Homenavi session-expiry error, unsupported country, and PAT permission failures.
+
 ## Development checks
 
 ```bash

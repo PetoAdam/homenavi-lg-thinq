@@ -181,9 +181,28 @@ async function api(path, options = {}) {
   if (!response.ok) {
     const err = new Error(data.error || `HTTP ${response.status}`);
     err.status = response.status;
+    err.detail = data.detail || '';
+    err.remediation = data.remediation || '';
+    err.provider = data.provider || '';
+    err.providerCode = data.provider_code || '';
+    if (!err.provider && response.status === 401) {
+      err.message = 'Your Homenavi session is no longer valid.';
+      err.remediation = 'Sign in again, then retry the setup action.';
+    }
     throw err;
   }
   return data;
+}
+
+function formatRequestError(err) {
+  const message = String(err?.message || 'Request failed.').trim();
+  const detail = String(err?.detail || '').trim();
+  const remediation = String(err?.remediation || '').trim();
+  const code = String(err?.providerCode || '').trim();
+  const detailText = detail && detail !== message ? ` ${detail}` : '';
+  const codeText = code ? ` (LG code ${code})` : '';
+  const remediationText = remediation ? ` ${remediation}` : '';
+  return `${message}${codeText}${detailText}${remediationText}`;
 }
 
 function clearCommandRefreshTimer() {
@@ -818,7 +837,7 @@ function bindSetupControls() {
       try {
         await saveSetup();
       } catch (err) {
-        setStatus(`Save failed: ${err.message}`, false);
+        setStatus(`Save failed: ${formatRequestError(err)}`, false);
       }
     });
   }
@@ -828,7 +847,7 @@ function bindSetupControls() {
       try {
         await verifySetupWithPat();
       } catch (err) {
-        setStatus(`Verification failed: ${err.message}`, false);
+        setStatus(`Verification failed: ${formatRequestError(err)}`, false);
       }
     });
   }
@@ -838,7 +857,7 @@ function bindSetupControls() {
       try {
         await verifyStoredPat();
       } catch (err) {
-        setStatus(`Stored PAT verify failed: ${err.message}`, false);
+        setStatus(`Stored PAT verify failed: ${formatRequestError(err)}`, false);
       }
     });
   }
