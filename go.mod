@@ -1,6 +1,6 @@
 module github.com/PetoAdam/homenavi-lg-thinq
 
-go 1.25.0
+go 1.26.0
 
 require github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 
@@ -11,6 +11,6 @@ require (
 )
 
 require (
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.13.0 // indirect
 )
