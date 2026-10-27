@@ -107,6 +107,15 @@ func TestRealtimeEndpointForRouteSupportsMQTTAndWS(t *testing.T) {
 	}
 }
 
+func TestThinQRealtimeFallbackTransportUsesMQTTForWebSocket(t *testing.T) {
+	if got := thinQRealtimeFallbackTransport("ws"); got != "mqtt" {
+		t.Fatalf("expected MQTT fallback for WebSocket, got %q", got)
+	}
+	if got := thinQRealtimeFallbackTransport("mqtt"); got != "" {
+		t.Fatalf("expected no fallback for MQTT, got %q", got)
+	}
+}
+
 func TestThinQRealtimeBridgeFetchRouteUsesHeadersAndUnwrapsResult(t *testing.T) {
 	t.Parallel()
 	var authz string

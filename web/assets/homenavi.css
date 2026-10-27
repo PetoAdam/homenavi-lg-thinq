@@ -14,9 +14,9 @@
   --color-bg: #242e3a;
   --color-bg-secondary: #32404d;
 
-  --color-glass-bg: rgba(255,255,255,0.13);
-  --color-glass-bg-strong: rgba(255,255,255,0.18);
-  --color-glass-bg-light: rgba(255,255,255,0.10);
+  --color-glass-bg: rgba(255,255,255,0.08);
+  --color-glass-bg-strong: rgba(255,255,255,0.13);
+  --color-glass-bg-light: rgba(255,255,255,0.06);
   --color-glass-bg-ultra: rgba(255,255,255,0.02);
 
   --color-glass-border: rgba(255,255,255,0.32);
@@ -47,19 +47,19 @@
   --gradient-bg: linear-gradient(120deg, var(--color-bg) 0%, var(--color-bg-secondary) 100%);
 
   --color-modal-surface: rgba(5, 9, 20, 0.92);
-  --color-surface-card: rgba(8, 11, 22, 0.78);
-  --color-surface-card-strong: rgba(8, 11, 22, 0.75);
-  --color-surface-panel: rgba(12, 17, 30, 0.72);
-  --color-surface-panel-soft: rgba(12, 17, 30, 0.55);
-  --color-surface-panel-muted: rgba(12, 18, 30, 0.8);
+  --color-surface-card: rgba(8, 11, 22, 0.52);
+  --color-surface-card-strong: rgba(8, 11, 22, 0.64);
+  --color-surface-panel: rgba(12, 17, 30, 0.48);
+  --color-surface-panel-soft: rgba(12, 17, 30, 0.34);
+  --color-surface-panel-muted: rgba(12, 18, 30, 0.62);
   --color-surface-shadow: rgba(12, 16, 26, 0.9);
   --color-surface-chip: rgba(8, 11, 20, 0.6);
   --color-surface-iris: rgba(32, 41, 70, 0.38);
 
-  --radius-lg: 18px;
-  --radius-md: 14px;
-  --radius-sm: 12px;
-  --radius-xs: 10px;
+  --radius-lg: 8px;
+  --radius-md: 7px;
+  --radius-sm: 6px;
+  --radius-xs: 5px;
 
   --shadow-card: 0 16px 40px rgba(0, 0, 0, 0.35);
   --shadow-soft: 0 10px 26px rgba(0, 0, 0, 0.28);
@@ -204,6 +204,7 @@ a { color: inherit; }
   border: 1px solid var(--color-glass-border-xlight);
   background: var(--color-surface-card);
   box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px) saturate(115%);
   overflow: hidden;
 }
 
@@ -280,11 +281,12 @@ a { color: inherit; }
 .hn-input, .hn-select {
   width: 100%;
   padding: 10px 12px;
-  border-radius: 0.9rem;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-glass-border-xlight);
   background: var(--color-surface-panel-muted);
   color: var(--color-white);
   outline: none;
+  backdrop-filter: blur(10px);
 }
 
 .hn-input:focus, .hn-select:focus {
@@ -302,7 +304,7 @@ a { color: inherit; }
 .hn-btn {
   appearance: none;
   border: 1px solid var(--color-glass-border-light);
-  border-radius: 0.95rem;
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   background: var(--color-surface-panel-soft);
   color: var(--color-white);

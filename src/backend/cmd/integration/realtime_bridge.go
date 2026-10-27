@@ -82,6 +82,12 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 
 		sessionStarted := time.Now()
 		err = b.runSession(ctx, cfg, localMQTT, syncNow, hub, store, gate)
+		if err != nil && thinQRealtimeFallbackTransport(cfg.RealtimeTransport) != "" {
+			fallbackCfg := cfg
+			fallbackCfg.RealtimeTransport = thinQRealtimeFallbackTransport(cfg.RealtimeTransport)
+			logWarnf("thinq realtime %s session failed; trying %s fallback err=%v", cfg.RealtimeTransport, fallbackCfg.RealtimeTransport, err)
+			err = b.runSession(ctx, fallbackCfg, localMQTT, syncNow, hub, store, gate)
+		}
 		if err != nil {
 			logWarnf("thinq realtime session ended err=%v", err)
 			if hub != nil {
@@ -98,6 +104,13 @@ func (b *thinQRealtimeBridge) Run(ctx context.Context, localMQTT mqtt.Client, sy
 			return
 		}
 	}
+}
+
+func thinQRealtimeFallbackTransport(transport string) string {
+	if strings.EqualFold(strings.TrimSpace(transport), "ws") {
+		return "mqtt"
+	}
+	return ""
 }
 
 func (b *thinQRealtimeBridge) runSession(ctx context.Context, cfg setupConfig, localMQTT mqtt.Client, syncNow chan<- struct{}, hub *wsHub, store *bridgeStore, gate *commandStateGate) error {
