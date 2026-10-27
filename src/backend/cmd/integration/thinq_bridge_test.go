@@ -76,6 +76,26 @@ func TestMapThinQToHDPStateWasher(t *testing.T) {
 	}
 }
 
+func TestMapThinQCapabilitiesWasherKeepsPowerWritable(t *testing.T) {
+	d := testWasherDevice(true)
+	d.State["power"] = "off"
+
+	powerCapabilities := 0
+	for _, capability := range mapThinQCapabilities(d) {
+		if capability["property"] != "power" {
+			continue
+		}
+		powerCapabilities++
+		access, ok := capability["access"].(map[string]any)
+		if !ok || access["write"] != true {
+			t.Fatalf("expected writable power capability, got %#v", capability)
+		}
+	}
+	if powerCapabilities != 1 {
+		t.Fatalf("expected one power capability, got %d", powerCapabilities)
+	}
+}
+
 func TestMapThinQToHDPStateWasherOperationOnlyReport(t *testing.T) {
 	d := thinqDevice{
 		ID:     "washer-2",

@@ -509,6 +509,7 @@ func mapThinQCapabilities(d thinqDevice) []map[string]any {
 func enrichCapabilitiesWithStateProfile(deviceType string, base []map[string]any, mappedState map[string]any, profile map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(base)+16)
 	seen := map[string]bool{}
+	controlledProperties := map[string]bool{}
 	appendCap := func(c map[string]any) {
 		id := strings.TrimSpace(asString(c["id"]))
 		if id == "" || seen[id] {
@@ -519,9 +520,13 @@ func enrichCapabilitiesWithStateProfile(deviceType string, base []map[string]any
 	}
 	for _, c := range base {
 		appendCap(c)
+		property := strings.TrimSpace(asString(c["property"]))
+		if property != "" {
+			controlledProperties[property] = true
+		}
 	}
 	for key, val := range mappedState {
-		if key == "online" {
+		if key == "online" || controlledProperties[key] {
 			continue
 		}
 		id := "thinq." + deviceType + "." + key
