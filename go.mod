@@ -1,6 +1,6 @@
 module github.com/PetoAdam/homenavi-lg-thinq
 
-go 1.26.0
+go 1.26.10
 
 require github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 

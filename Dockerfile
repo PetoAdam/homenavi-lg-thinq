@@ -1,6 +1,6 @@
 FROM golang:1.26.4-alpine3.22 AS build
 ARG TARGETARCH=amd64
-ARG GO_VERSION=1.26.9
+ARG GO_VERSION=1.26.10
 RUN apk add --no-cache curl ca-certificates \
 	&& rm -rf /usr/local/go \
 	&& curl --fail --location --silent --show-error "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
