@@ -1147,6 +1147,7 @@ func publishState(cli mqtt.Client, store *bridgeStore, gate *commandStateGate, h
 			errMsg = "state confirmation timed out"
 		}
 		publishCommandResult(cli, resolution.DeviceID, resolution.Corr, success, resolution.Status, errMsg)
+		store.clearPendingState(resolution.DeviceID)
 		if hub != nil {
 			evtType := "command_applied"
 			if resolution.Status == "timeout" {
@@ -1195,6 +1196,9 @@ func monitorThinQCommandState(ctx context.Context, deviceID, corr string, gate *
 	pending, expired := gate.pendingStatus(deviceID, corr)
 	if expired {
 		publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+		if store != nil {
+			store.clearPendingState(deviceID)
+		}
 		if hub != nil && store != nil {
 			hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 		}
@@ -1215,6 +1219,9 @@ func monitorThinQCommandState(ctx context.Context, deviceID, corr string, gate *
 			pending, expired := gate.pendingStatus(deviceID, corr)
 			if expired {
 				publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+				if store != nil {
+					store.clearPendingState(deviceID)
+				}
 				if hub != nil && store != nil {
 					hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 				}
@@ -1230,6 +1237,9 @@ func monitorThinQCommandState(ctx context.Context, deviceID, corr string, gate *
 				pending, expired := gate.pendingStatus(deviceID, corr)
 				if expired {
 					publishCommandResult(cli, sanitizeDeviceID(deviceID), corr, false, "timeout", "state confirmation timed out")
+					if store != nil {
+						store.clearPendingState(deviceID)
+					}
 					if hub != nil && store != nil {
 						hub.broadcast(map[string]any{"type": "command_timeout", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "status": "timeout", "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 					}
@@ -1605,18 +1615,21 @@ func main() {
 			expected := expectedStateForCommand(dev, cmd)
 			baseline := mapThinQToHDPState(dev)
 			stateGate.trackWithBaseline(targetID, corr, expected, baseline)
+			store.setPendingState(targetID, expected)
 			publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, true, "accepted", "")
 
 			cfg, cfgErr := setup.load()
 			if cfgErr != nil {
 				logWarnf("mqtt command failed loading setup requested_id=%s err=%v", requestedID, cfgErr)
 				stateGate.cancel(targetID, corr)
+				store.clearPendingState(targetID)
 				publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, false, "failed", cfgErr.Error())
 				return
 			}
 			if err := cloudProvider.SendCommand(ctx, cfg, targetID, cmd); err != nil {
 				logWarnf("mqtt command provider failed requested_id=%s target_id=%s command=%s error=%v", requestedID, targetID, cmd.Name, err)
 				stateGate.cancel(targetID, corr)
+				store.clearPendingState(targetID)
 				publishCommandResult(mqttClient, sanitizeDeviceID(requestedID), corr, false, "failed", err.Error())
 				hub.broadcast(map[string]any{"type": "command_failed", "device_id": sanitizeDeviceID(requestedID), "command": cmd.Name, "provider": cloudProvider.Name(), "error": err.Error(), "ts": time.Now().UTC().UnixMilli()})
 				return
@@ -1999,21 +2012,25 @@ func main() {
 		corr := "admin-" + strconv.FormatInt(time.Now().UTC().UnixMilli(), 10)
 		baseline := mapThinQToHDPState(dev)
 		stateGate.trackWithBaseline(deviceID, corr, expected, baseline)
+		store.setPendingState(deviceID, expected)
 		cfg, err := setup.load()
 		if err != nil {
 			logWarnf("api device-command setup load failed id=%s err=%v", deviceID, err)
 			stateGate.cancel(deviceID, corr)
+			store.clearPendingState(deviceID)
 			writeJSONError(w, http.StatusInternalServerError, "failed to load setup")
 			return
 		}
 		if err := cloudProvider.SendCommand(r.Context(), cfg, deviceID, cmd); err != nil {
 			logWarnf("api device-command provider failed id=%s command=%s err=%v", deviceID, cmd.Name, err)
 			stateGate.cancel(deviceID, corr)
+			store.clearPendingState(deviceID)
 			writeJSONError(w, providerHTTPStatus(err, http.StatusBadGateway), err.Error())
 			return
 		}
 		stateGate.extendFreeze(deviceID, corr, commandStateGatePostGrace)
 		monitorThinQCommandState(r.Context(), deviceID, corr, stateGate, syncNow, mqttClient, hub, store)
+		hub.broadcast(map[string]any{"type": "command_in_progress", "device_id": sanitizeDeviceID(deviceID), "corr": corr, "command": cmd.Name, "provider": cloudProvider.Name(), "ts": time.Now().UTC().UnixMilli(), "devices": store.allSnapshot()})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "queued_sync": true})
 	})

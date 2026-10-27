@@ -105,6 +105,31 @@ func TestMapThinQToHDPStateWasherOperationOnlyReport(t *testing.T) {
 	}
 }
 
+func TestBridgeSnapshotPreservesPendingCommandState(t *testing.T) {
+	store := newBridgeStore()
+	store.replace([]thinqDevice{{
+		ID: "washer-1",
+		Type: "washer",
+		State: map[string]any{"response": []any{map[string]any{
+			"operation": map[string]any{"washerOperationMode": "POWER_OFF"},
+		}}},
+	}})
+	store.setPendingState("washer-1", map[string]any{"power": "on"})
+
+	snapshot := store.allSnapshot()["washer-1"].(map[string]any)
+	mapped := snapshot["mapped_state"].(map[string]any)
+	if mapped["power"] != "on" {
+		t.Fatalf("expected pending command state to overlay stale snapshot, got %#v", mapped)
+	}
+
+	store.clearPendingState("washer-1")
+	snapshot = store.allSnapshot()["washer-1"].(map[string]any)
+	mapped = snapshot["mapped_state"].(map[string]any)
+	if mapped["power"] != "off" {
+		t.Fatalf("expected confirmed raw state after clearing overlay, got %#v", mapped)
+	}
+}
+
 func TestTranslateTVCommand(t *testing.T) {
 	d := thinqDevice{ID: "tv-1", Type: "tv"}
 	cmd, err := translateHDPCommand(d, "", map[string]any{"volume": 44})

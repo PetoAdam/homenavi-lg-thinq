@@ -324,11 +324,17 @@ func extractThinQItems(payload map[string]any) []any {
 }
 
 type bridgeStore struct {
-	mu      sync.RWMutex
-	devices map[string]thinqDevice
+	mu           sync.RWMutex
+	devices      map[string]thinqDevice
+	pendingState map[string]map[string]any
 }
 
-func newBridgeStore() *bridgeStore { return &bridgeStore{devices: map[string]thinqDevice{}} }
+func newBridgeStore() *bridgeStore {
+	return &bridgeStore{
+		devices:      map[string]thinqDevice{},
+		pendingState: map[string]map[string]any{},
+	}
+}
 
 func (s *bridgeStore) replace(devices []thinqDevice) []string {
 	next := make(map[string]thinqDevice, len(devices))
@@ -390,6 +396,27 @@ func (s *bridgeStore) mergeState(deviceID string, patch any, timestamp string) (
 	return clone, true
 }
 
+func (s *bridgeStore) setPendingState(deviceID string, state map[string]any) {
+	if s == nil || len(state) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pendingState == nil {
+		s.pendingState = map[string]map[string]any{}
+	}
+	s.pendingState[strings.TrimSpace(deviceID)] = cloneAnyMap(state)
+}
+
+func (s *bridgeStore) clearPendingState(deviceID string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.pendingState, strings.TrimSpace(deviceID))
+	s.mu.Unlock()
+}
+
 func (s *bridgeStore) list() []thinqDevice {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -403,17 +430,32 @@ func (s *bridgeStore) list() []thinqDevice {
 }
 
 func (s *bridgeStore) allSnapshot() map[string]any {
-	devs := s.list()
+	s.mu.RLock()
+	devs := make([]thinqDevice, 0, len(s.devices))
+	pending := make(map[string]map[string]any, len(s.pendingState))
+	for _, d := range s.devices {
+		cloned := d
+		cloned.State = cloneAnyMap(d.State)
+		devs = append(devs, cloned)
+	}
+	for id, state := range s.pendingState {
+		pending[id] = cloneAnyMap(state)
+	}
+	s.mu.RUnlock()
 	out := make(map[string]any, len(devs))
 	for _, d := range devs {
 		caps := mapThinQCapabilities(d)
+		mappedState := mapThinQToHDPState(d)
+		for key, value := range pending[d.ID] {
+			mappedState[key] = value
+		}
 		out[d.ID] = map[string]any{
 			"name":         d.Name,
 			"type":         normalizeDeviceType(d.Type),
 			"manufacturer": d.Manufacturer,
 			"model":        d.Model,
 			"online":       d.Online,
-			"mapped_state": mapThinQToHDPState(d),
+			"mapped_state": mappedState,
 			"raw_state":    cloneAnyMap(d.State),
 			"homenavi_id":  sanitizeDeviceID(d.ID),
 			"protocol":     "lgthinq",

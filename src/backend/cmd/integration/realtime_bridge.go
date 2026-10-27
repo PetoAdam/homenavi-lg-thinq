@@ -287,6 +287,7 @@ func (b *thinQRealtimeBridge) applyRealtimeStateUpdate(localMQTT mqtt.Client, hu
 			errMsg = "state confirmation timed out"
 		}
 		publishCommandResult(localMQTT, resolution.DeviceID, resolution.Corr, success, resolution.Status, errMsg)
+		store.clearPendingState(resolution.DeviceID)
 	}
 	if hub != nil {
 		evtType := "thinq_realtime_state"
