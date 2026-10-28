@@ -1046,6 +1046,9 @@ func newMQTTClient(broker string) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(server)
 	opts.SetClientID("homenavi-lg-thinq-" + strconv.FormatInt(time.Now().UnixNano(), 10))
+	opts.SetAutoReconnect(true)
+	opts.SetCleanSession(false)
+	opts.SetResumeSubs(true)
 	u, _ := url.Parse(strings.TrimSpace(broker))
 	if u != nil && u.User != nil {
 		pw, _ := u.User.Password()
