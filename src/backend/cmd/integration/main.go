@@ -1524,7 +1524,7 @@ func main() {
 
 	brokerURL := strings.TrimSpace(os.Getenv("MQTT_BROKER_URL"))
 	if brokerURL == "" {
-		brokerURL = "mqtt://emqx:1883"
+		brokerURL = "mqtt://mqtt-broker:1883"
 	}
 	if setupCfg.SyncIntervalSec <= 0 {
 		setupCfg.SyncIntervalSec = 180
