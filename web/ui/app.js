@@ -798,7 +798,7 @@ function bindDashboardControls() {
   if (elements.compactModeBtn) {
     elements.compactModeBtn.addEventListener('click', () => {
       state.compact = !state.compact;
-      elements.compactModeBtn.textContent = `Compact: ${state.compact ? 'On' : 'Off'}`;
+      elements.compactModeBtn.querySelector('span').textContent = `Compact: ${state.compact ? 'On' : 'Off'}`;
       renderDevices();
     });
   }

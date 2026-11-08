@@ -32,16 +32,5 @@
         </div>
       </div>
     </main>
-    <script>
-      // Add icons progressively.
-      window.addEventListener('DOMContentLoaded', () => {
-        const { icon } = window.hnIcons || {};
-        if (!icon) return;
-        const dash = document.getElementById('openDash');
-        const setup = document.getElementById('openSetup');
-        if (dash) dash.insertAdjacentHTML('afterbegin', icon('dashboard', 'hn-icon hn-icon--lg') + ' ');
-        if (setup) setup.insertAdjacentHTML('afterbegin', icon('settings', 'hn-icon hn-icon--lg') + ' ');
-      });
-    </script>
   </body>
 </html>

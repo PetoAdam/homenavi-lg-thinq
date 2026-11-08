@@ -69,8 +69,8 @@
         position: relative;
       }
       .lgw-sicon svg { width: 18px; height: 18px; }
-      .lgw-sicon--ok { color: var(--color-text-success); }
-      .lgw-sicon--err { color: var(--color-text-danger); }
+      .lgw-sicon--ok { color: var(--color-success); }
+      .lgw-sicon--err { color: var(--color-danger); }
       .lgw-badge {
         position: absolute;
         right: -6px;
@@ -85,7 +85,7 @@
         font-weight: 800;
         border: 1px solid var(--color-glass-border-xlight);
         background: var(--color-surface-panel);
-        color: var(--color-text);
+        color: var(--color-white);
       }
       .lgw-controls {
         display: flex;
@@ -113,7 +113,8 @@
         border: 1px solid var(--color-glass-border-xlight);
         background: var(--color-surface-panel-muted);
       }
-      .lgw-slider input[type="range"] { width: 140px; }
+      .lgw-slider input[type="range"] { width: min(140px, 100%); }
+      .lgw-slider { max-width: 100%; }
 
       .lgw-section {
         margin-top: 12px;

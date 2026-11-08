@@ -75,3 +75,19 @@ func TestThinQUIFilesExistAndContainExpectedTitles(t *testing.T) {
 		t.Fatalf("shared app.js script reference is required in both ui pages")
 	}
 }
+
+func TestThinQUIUsesExternalScriptsForSecurityPolicy(t *testing.T) {
+	uiDir := filepath.Join("..", "..", "..", "..", "web", "ui")
+	for _, name := range []string{"index.html", "dashboard.html", "setup.html"} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(uiDir, name))
+			if err != nil {
+				t.Fatalf("read ui: %v", err)
+			}
+			html := string(data)
+			if strings.Contains(html, "<script>") || !strings.Contains(html, `src="../assets/icons.js"`) {
+				t.Fatal("ui must load icons externally without inline scripts")
+			}
+		})
+	}
+}

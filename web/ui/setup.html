@@ -143,27 +143,5 @@
     </main>
 
     <script src="./app.js" defer></script>
-    <script>
-      window.addEventListener('DOMContentLoaded', () => {
-        const { icon } = window.hnIcons || {};
-        if (!icon) return;
-        const map = [
-          ['saveBtn', 'settings'],
-          ['verifyBtn', 'bolt'],
-          ['verifyOnlyBtn', 'bolt'],
-          ['reloadBtn', 'refresh'],
-          ['refreshAuthStatusBtn', 'refresh'],
-          ['exportSetupBtn', 'list'],
-          ['importSetupBtn', 'list'],
-          ['openDashBtn', 'dashboard'],
-          ['clearPatBtn', 'settings'],
-        ];
-        map.forEach(([id, name]) => {
-          const el = document.getElementById(id);
-          if (!el) return;
-          el.insertAdjacentHTML('afterbegin', icon(name, 'hn-icon') + ' ');
-        });
-      });
-    </script>
   </body>
 </html>

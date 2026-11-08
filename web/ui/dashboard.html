@@ -38,7 +38,7 @@
               <div class="hn-kpi"><div class="hn-kpi__label">Last Sync</div><div id="lastSyncAt" class="hn-kpi__value">-</div></div>
             </div>
 
-            <div class="hn-form" style="grid-template-columns: 1.2fr 1fr 1fr 1fr auto; align-items:end; margin-top:12px;">
+            <div class="hn-form hn-filter-grid">
               <label class="hn-form__full" style="grid-column:auto;">
                 <span class="hn-label">Search</span>
                 <input id="searchInput" class="hn-input" placeholder="Search by name, type, or id" />
@@ -68,7 +68,7 @@
           <option value="updated">Sort by last seen</option>
                 </select>
               </label>
-              <button id="compactModeBtn" class="hn-btn" type="button" style="height:42px;">Compact: Off</button>
+              <button id="compactModeBtn" class="hn-btn" type="button" style="height:42px;"><span>Compact: Off</span></button>
             </div>
 
             <div class="hn-actions" style="margin-top:12px;">
@@ -83,7 +83,7 @@
           </div>
         </section>
 
-        <div class="hn-grid" style="grid-template-columns: 1.9fr 1fr;">
+        <div class="hn-grid hn-dashboard-grid">
           <section class="hn-card">
             <div class="hn-card__header">
               <h2>Mapped devices</h2>
@@ -108,24 +108,5 @@
     </main>
 
     <script src="./app.js" defer></script>
-    <script>
-      window.addEventListener('DOMContentLoaded', () => {
-        const { icon } = window.hnIcons || {};
-        if (!icon) return;
-        const map = [
-          ['syncBtn', 'refresh'],
-          ['reloadBtn', 'refresh'],
-          ['bulkOnBtn', 'power'],
-          ['bulkOffBtn', 'power'],
-          ['compactModeBtn', 'list'],
-          ['openSetupBtn', 'settings'],
-        ];
-        map.forEach(([id, name]) => {
-          const el = document.getElementById(id);
-          if (!el) return;
-          el.insertAdjacentHTML('afterbegin', icon(name, 'hn-icon') + ' ');
-        });
-      });
-    </script>
   </body>
 </html>

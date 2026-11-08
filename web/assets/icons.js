@@ -46,4 +46,29 @@
   }
 
   window.hnIcons = { icon };
+
+  window.addEventListener('DOMContentLoaded', () => {
+    const buttons = [
+      ['openDash', 'dashboard', 'hn-icon hn-icon--lg'],
+      ['openSetup', 'settings', 'hn-icon hn-icon--lg'],
+      ['syncBtn', 'refresh'],
+      ['reloadBtn', 'refresh'],
+      ['bulkOnBtn', 'power'],
+      ['bulkOffBtn', 'power'],
+      ['compactModeBtn', 'list'],
+      ['openSetupBtn', 'settings'],
+      ['saveBtn', 'settings'],
+      ['verifyBtn', 'bolt'],
+      ['verifyOnlyBtn', 'bolt'],
+      ['refreshAuthStatusBtn', 'refresh'],
+      ['exportSetupBtn', 'list'],
+      ['importSetupBtn', 'list'],
+      ['openDashBtn', 'dashboard'],
+      ['clearPatBtn', 'settings'],
+    ];
+    buttons.forEach(([id, name, className]) => {
+      const element = document.getElementById(id);
+      if (element) element.insertAdjacentHTML('afterbegin', icon(name, className || 'hn-icon') + ' ');
+    });
+  });
 })();
