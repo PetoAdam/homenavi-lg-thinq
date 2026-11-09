@@ -467,11 +467,11 @@ function renderSelected() {
     }
   }
 
-  if (deviceTitleEl) deviceTitleEl.textContent = humanizeType(kind);
+  const name = String(dev?.name || '').trim();
+  if (deviceTitleEl) deviceTitleEl.textContent = name || humanizeType(kind);
   if (deviceSubtitleEl) {
-    const name = String(dev?.name || '').trim();
     const mappedCount = state.deviceIds.length;
-    deviceSubtitleEl.textContent = name ? `${name}${mappedCount > 1 ? ` • ${mappedCount} mapped` : ''}` : `${mappedCount} mapped`;
+    deviceSubtitleEl.textContent = `${humanizeType(kind)}${mappedCount > 1 ? ` • ${mappedCount} mapped` : ''}`;
   }
   if (deviceIconEl) deviceIconEl.innerHTML = iconHtml(deviceTypeToIconName(kind), 'hn-icon');
 

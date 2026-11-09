@@ -7,14 +7,18 @@
     <link rel="stylesheet" href="../../assets/homenavi.css" />
     <script src="../../assets/icons.js" defer></script>
     <style>
-      body { background: transparent; overflow-x: hidden; overflow-y: auto; --color-surface-panel-muted: rgba(28, 34, 44, 0.72); --color-surface-chip: rgba(28, 34, 44, 0.72); }
+      :root { background: transparent; color-scheme: normal; }
+      body { background: transparent; overflow-x: hidden; overflow-y: auto; --color-surface-panel-muted: rgba(255, 255, 255, 0.05); --color-surface-chip: rgba(255, 255, 255, 0.05); --color-secondary-light: #c3ced8; }
       body::before { display: none; }
-      .hn-page { padding: 0; }
-      .lgw-root { padding: 10px 12px; }
+      .hn-page { padding: 0; display: flex; align-items: center; }
+      .lgw-root { width: 100%; padding: 14px 16px; }
       .lgw-head {
         display: flex;
         align-items: center;
+        justify-content: center;
         gap: 8px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--color-glass-border-xlight);
         cursor: default;
         user-select: none;
       }
@@ -26,11 +30,11 @@
         border-radius: 8px;
         display: grid;
         place-items: center;
-        background: var(--color-surface-panel-muted);
-        border: 1px solid var(--color-glass-border-xlight);
+        background: transparent;
+        border: 0;
       }
       .lgw-icon svg { width: 24px; height: 24px; }
-      .lgw-title { font-size: 0.95rem; font-weight: 700; line-height: 1.2; }
+      .lgw-title { font-size: 1.05rem; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
       .lgw-sub { margin-top: 2px; }
       .lgw-pick {
         cursor: pointer;
@@ -39,7 +43,6 @@
         text-decoration: underline;
       }
       .lgw-right {
-        margin-left: auto;
         display: inline-flex;
         align-items: center;
         gap: 8px;
@@ -56,6 +59,7 @@
       .lgw-status {
         margin-top: 8px;
         display: flex;
+        justify-content: center;
         gap: 8px;
         flex-wrap: wrap;
       }
@@ -90,6 +94,7 @@
       }
       .lgw-controls {
         display: flex;
+        justify-content: center;
         gap: 8px;
         flex-wrap: wrap;
         align-items: center;
@@ -122,6 +127,7 @@
       }
       .lgw-section-title {
         font-size: 0.72rem;
+        text-align: center;
         text-transform: uppercase;
         letter-spacing: 0;
         opacity: 0.7;
@@ -129,6 +135,7 @@
       }
       .lgw-state {
         display: flex;
+        justify-content: center;
         gap: 8px;
         flex-wrap: wrap;
       }
