@@ -7,29 +7,30 @@
     <link rel="stylesheet" href="../../assets/homenavi.css" />
     <script src="../../assets/icons.js" defer></script>
     <style>
-      body { background: transparent; }
+      body { background: transparent; overflow-x: hidden; overflow-y: auto; --color-surface-panel-muted: rgba(28, 34, 44, 0.72); --color-surface-chip: rgba(28, 34, 44, 0.72); }
       body::before { display: none; }
       .hn-page { padding: 0; }
-      .lgw-root { padding: 10px; }
+      .lgw-root { padding: 10px 12px; }
       .lgw-head {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         cursor: default;
         user-select: none;
       }
       .lgw-head:focus { outline: none; }
       .lgw-icon {
-        width: 56px;
-        height: 56px;
-        border-radius: 14px;
+        width: 40px;
+        height: 40px;
+        flex: 0 0 40px;
+        border-radius: 8px;
         display: grid;
         place-items: center;
         background: var(--color-surface-panel-muted);
         border: 1px solid var(--color-glass-border-xlight);
       }
-      .lgw-icon svg { width: 34px; height: 34px; }
-      .lgw-title { font-weight: 900; letter-spacing: -0.01em; line-height: 1.1; }
+      .lgw-icon svg { width: 24px; height: 24px; }
+      .lgw-title { font-size: 0.95rem; font-weight: 700; line-height: 1.2; }
       .lgw-sub { margin-top: 2px; }
       .lgw-pick {
         cursor: pointer;
@@ -50,18 +51,18 @@
         opacity: 0.85;
       }
       .lgw-menu {
-        margin-top: 10px;
+        margin-top: 8px;
       }
       .lgw-status {
-        margin-top: 10px;
+        margin-top: 8px;
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
       }
       .lgw-sicon {
-        width: 36px;
-        height: 36px;
-        border-radius: 12px;
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
         border: 1px solid var(--color-glass-border-xlight);
         background: var(--color-surface-panel-muted);
         display: grid;
@@ -94,22 +95,22 @@
         align-items: center;
       }
       .lgw-btn {
-        padding: 10px;
-        border-radius: 14px;
+        padding: 8px;
+        border-radius: 8px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         gap: 8px;
-        min-width: 44px;
-        min-height: 44px;
+        min-width: 36px;
+        min-height: 36px;
       }
       .lgw-btn svg { width: 20px; height: 20px; }
       .lgw-slider {
         display: inline-flex;
         align-items: center;
-        gap: 10px;
-        padding: 10px 12px;
-        border-radius: 14px;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
         border: 1px solid var(--color-glass-border-xlight);
         background: var(--color-surface-panel-muted);
       }
@@ -117,14 +118,14 @@
       .lgw-slider { max-width: 100%; }
 
       .lgw-section {
-        margin-top: 12px;
+        margin-top: 8px;
       }
       .lgw-section-title {
         font-size: 0.72rem;
         text-transform: uppercase;
-        letter-spacing: 0.12em;
+        letter-spacing: 0;
         opacity: 0.7;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
       }
       .lgw-state {
         display: flex;
@@ -135,9 +136,9 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
-        padding: 10px 12px;
-        border-radius: 14px;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
         background: var(--color-surface-panel-muted);
         border: 1px solid var(--color-glass-border-xlight);
       }
