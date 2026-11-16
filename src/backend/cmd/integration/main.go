@@ -260,9 +260,34 @@ type setupStore struct {
 }
 
 func defaultSetupConfig() setupConfig {
-	return setupConfig{
-		RealtimeEnabled: true,
+	realtimeEnabled := true
+	if value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("LG_THINQ_REALTIME_ENABLED"))); err == nil {
+		realtimeEnabled = value
 	}
+	return setupConfig{
+		RealtimeEnabled: realtimeEnabled,
+	}
+}
+
+func decodeSetupUpdate(body []byte, existing setupConfig) (setupConfig, bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return setupConfig{}, false, err
+	}
+	if raw == nil {
+		return setupConfig{}, false, fmt.Errorf("setup must be an object")
+	}
+	var payload setupConfig
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return setupConfig{}, false, err
+	}
+	if value, ok := raw["realtime_enabled"]; !ok {
+		payload.RealtimeEnabled = existing.RealtimeEnabled
+	} else if string(value) == "null" {
+		return setupConfig{}, false, fmt.Errorf("realtime_enabled must be a boolean")
+	}
+	_, patProvided := raw["pat_token"]
+	return payload, patProvided, nil
 }
 
 const defaultSetupFileName = "lg-thinq.setup.json"
@@ -437,9 +462,6 @@ func applySetupDefaults(cfg setupConfig) setupConfig {
 	if cfg.RealtimeTransport != "mqtt" && cfg.RealtimeTransport != "ws" {
 		cfg.RealtimeTransport = "mqtt"
 	}
-	if !cfg.RealtimeEnabled {
-		cfg.RealtimeEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("LG_THINQ_REALTIME_ENABLED")), "true")
-	}
 	if cfg.RealtimeReconnectSec <= 0 {
 		cfg.RealtimeReconnectSec = 15
 	}
@@ -482,7 +504,7 @@ func (s *setupStore) loadUnlocked() (setupConfig, error) {
 		return applySetupDefaults(defaultSetupConfig()), nil
 	}
 	if _, ok := raw["realtime_enabled"]; !ok {
-		cfg.RealtimeEnabled = true
+		cfg.RealtimeEnabled = defaultSetupConfig().RealtimeEnabled
 	}
 	if cfg.SyncIntervalSec <= 0 {
 		cfg.SyncIntervalSec = 180
@@ -1712,26 +1734,14 @@ func main() {
 			writeJSONError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
-		// Determine whether PAT was explicitly provided by the caller.
-		// This lets us preserve stored PAT when the UI omits it or sends an empty string,
-		// while still validating a newly entered PAT during save.
-		patProvided := false
-		{
-			var raw map[string]json.RawMessage
-			if err := json.Unmarshal(body, &raw); err == nil {
-				if _, ok := raw["pat_token"]; ok {
-					patProvided = true
-				}
-			}
-		}
-		var payload setupConfig
-		if err := json.Unmarshal(body, &payload); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid json")
-			return
-		}
 		existing, existingErr := setup.load()
 		if existingErr != nil {
 			writeJSONError(w, http.StatusInternalServerError, "failed to load existing setup")
+			return
+		}
+		payload, patProvided, err := decodeSetupUpdate(body, existing)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
 		payload.AccountEmail = strings.TrimSpace(payload.AccountEmail)

@@ -137,3 +137,74 @@ func TestSetupStoreLoadPreservesExplicitRealtimeDisabled(t *testing.T) {
 		t.Fatalf("expected explicit realtime_enabled=false to be preserved")
 	}
 }
+
+func TestRealtimeEnvironmentIsOnlyADefault(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		env  string
+		file string
+		want bool
+	}{
+		{"enabled environment and disabled config", "true", `{"realtime_enabled":false}`, false},
+		{"disabled environment and enabled config", "false", `{"realtime_enabled":true}`, true},
+		{"disabled environment and missing field", "false", `{}`, false},
+		{"enabled environment and missing field", "true", `{}`, true},
+		{"invalid environment and missing field", "invalid", `{}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LG_THINQ_REALTIME_ENABLED", test.env)
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, defaultSetupFileName), []byte(test.file), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := (&setupStore{path: root}).load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.RealtimeEnabled != test.want {
+				t.Fatalf("got realtime_enabled=%t, want %t", got.RealtimeEnabled, test.want)
+			}
+		})
+	}
+}
+
+func TestRealtimeEnvironmentDefaultWithoutSetupFile(t *testing.T) {
+	t.Setenv("LG_THINQ_REALTIME_ENABLED", "false")
+	got, err := (&setupStore{path: t.TempDir()}).load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RealtimeEnabled {
+		t.Fatal("expected environment default to disable realtime for a new setup")
+	}
+}
+
+func TestDecodeSetupUpdatePreservesOmittedRealtime(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		body        string
+		existing    bool
+		want        bool
+		patProvided bool
+		wantErr     bool
+	}{
+		{"omitted enabled", `{}`, true, true, false, false},
+		{"omitted disabled", `{}`, false, false, false, false},
+		{"explicit disabled", `{"realtime_enabled":false}`, true, false, false, false},
+		{"explicit enabled", `{"realtime_enabled":true,"pat_token":""}`, false, true, true, false},
+		{"invalid type", `{"realtime_enabled":"false"}`, true, false, false, true},
+		{"null realtime", `{"realtime_enabled":null}`, true, false, false, true},
+		{"null payload", `null`, true, false, false, true},
+		{"invalid json", `{`, true, false, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, patProvided, err := decodeSetupUpdate([]byte(test.body), setupConfig{RealtimeEnabled: test.existing})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v, wantErr %t", err, test.wantErr)
+			}
+			if err == nil && (got.RealtimeEnabled != test.want || patProvided != test.patProvided) {
+				t.Fatalf("got realtime=%t, patProvided=%t", got.RealtimeEnabled, patProvided)
+			}
+		})
+	}
+}

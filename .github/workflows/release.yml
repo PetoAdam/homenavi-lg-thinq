@@ -30,3 +30,8 @@ jobs:
           manifest_path: manifest/homenavi-integration.json
           metadata_path: marketplace/metadata.json
           marketplace_api_url: https://marketplace.homenavi.org
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

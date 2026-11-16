@@ -65,7 +65,7 @@ function summarizeState(device) {
     parts.push(`${label}: ${v}`);
   };
 
-  if (kind.includes('washer') || kind.includes('wash') || kind.includes('dryer')) {
+  if (!kind.includes('dish_washer') && !kind.includes('dishwasher') && (kind.includes('washer') || kind.includes('wash') || kind.includes('dryer'))) {
     const run = String(state.run_state || '').toLowerCase().trim();
     add('run', run);
     const running = run === 'running' || run.includes('run');
@@ -73,7 +73,7 @@ function summarizeState(device) {
       const mins = formatMinutes(state.remaining_min);
       if (mins) add('remaining', mins);
     }
-    return parts.slice(0, 2).join(' • ');
+    if (parts.length) return parts.slice(0, 2).join(' • ');
   }
 
   if (kind.includes('tv')) {

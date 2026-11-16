@@ -33,6 +33,7 @@ jobs:
         uses: PetoAdam/homenavi/.github/actions/integration-verify@main
         with:
           manifest_path: manifest/homenavi-integration.json
+          require_hdp_metadata: 'true'
 
       - name: gosec
         run: |

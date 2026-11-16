@@ -18,11 +18,12 @@ const basePath = (() => {
   const idx = p.indexOf('/widgets/');
   return idx >= 0 ? p.slice(0, idx) : '';
 })();
+const requestedDeviceId = new URLSearchParams(window.location.search).get('device_id') || '';
 
 const state = {
   devices: {},
   deviceIds: [],
-  selectedId: '',
+  selectedId: requestedDeviceId,
   menuOpen: false,
   realtimeEnabled: true,
   realtimeTransport: '',
@@ -240,12 +241,22 @@ function deviceStateFingerprint(device) {
 }
 
 function escapeHtml(value) {
-  return String(value || '')
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function rangeCommandArgs(property, value, pairedProperty, pairedValue) {
+  if (!property || !Number.isFinite(value)) return null;
+  const args = { [property]: value };
+  if (pairedProperty) {
+    if (pairedValue === '' || !Number.isFinite(Number(pairedValue))) return null;
+    args[pairedProperty] = Number(pairedValue);
+  }
+  return args;
 }
 
 function iconHtml(name, className = 'hn-icon') {
@@ -279,6 +290,7 @@ function deviceKind(device) {
 
 function isWasher(device) {
   const t = deviceKind(device);
+  if (t.includes('dish_washer') || t.includes('dishwasher')) return false;
   return t.includes('washer') || t.includes('wash') || t.includes('dryer');
 }
 
@@ -371,7 +383,7 @@ function populateDeviceSelect() {
     deviceSelectEl.appendChild(opt);
   });
 
-  if (!state.selectedId || !state.deviceIds.includes(state.selectedId)) {
+  if (!state.selectedId || (!requestedDeviceId && !state.deviceIds.includes(state.selectedId))) {
     state.selectedId = state.deviceIds[0] || '';
   }
   deviceSelectEl.value = state.selectedId;
@@ -416,6 +428,9 @@ function commandToIconName(command) {
   if (cmd.includes('power')) return 'power';
   return 'bolt';
 }
+
+const pendingPairDevices = new Set();
+const pairDrafts = new Map();
 
 function renderSelected() {
   const id = state.selectedId;
@@ -507,18 +522,30 @@ function renderSelected() {
 
   if (controlsEl) {
     const controls = [];
+    const inputs = Array.isArray(dev?.inputs) ? dev.inputs : [];
+    const pairInputs = inputs.filter((input) => input?.id === 'set_thinq_pair' && input?.type === 'range');
+    const pairValid = pairInputs.length === 2 && pairInputs[0].property === pairInputs[1].paired_property && pairInputs[1].property === pairInputs[0].paired_property && pairInputs.every((input) => {
+      const { min, max, step } = input.range || {};
+      const current = mapped[input.property];
+      return [min, max, step, current].every((value) => typeof value === 'number' && Number.isFinite(value)) && min <= current && current <= max && step > 0;
+    });
+    let pairDraft = pairDrafts.get(id);
+    if (pairDraft && (!pairValid || pairInputs.some((input) => pairDraft.baseline[input.property] !== mapped[input.property] || !Number.isFinite(pairDraft.values[input.property]) || pairDraft.values[input.property] < input.range.min || pairDraft.values[input.property] > input.range.max))) {
+      pairDrafts.delete(id);
+      pairDraft = null;
+    }
+    const hasPowerControl = inputs.some((input) => ['set_power', 'power'].includes(String(input?.id || '').toLowerCase()));
 
-    if (online) {
+    if (hasPowerControl && online) {
       controls.push(
         `<button class="hn-btn lgw-btn cmd-power ${powerActive ? 'hn-btn--primary' : ''}" type="button" data-device-id="${escapeHtml(id)}" data-target="${powerActive ? 'off' : 'on'}" ${powerAllowed ? '' : 'disabled'} title="${powerActive ? 'Power off' : 'Power on'}" aria-label="${powerActive ? 'Power off' : 'Power on'}">${iconHtml('power')}</button>`,
       );
-    } else {
+    } else if (hasPowerControl) {
       controls.push(
         `<button class="hn-btn lgw-btn" type="button" disabled title="Offline">${iconHtml('power')}</button>`,
       );
     }
 
-    const inputs = Array.isArray(dev?.inputs) ? dev.inputs : [];
     inputs.forEach((input) => {
       const cmd = String(input?.id || '').trim();
       if (!cmd || cmd === 'set_power' || cmd === 'power') return;
@@ -533,10 +560,15 @@ function renderSelected() {
         controls.push(
           `<button class="hn-btn lgw-btn cmd-btn" type="button" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" ${allowed ? '' : 'disabled'} title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${iconHtml(commandToIconName(cmd))}</button>`,
         );
+      } else if (type === 'toggle') {
+        const current = mapped[input?.property];
+        controls.push(`<label>${escapeHtml(label)} <input class="cmd-toggle" type="checkbox" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input?.property || '')}" ${current === true ? 'checked' : ''} ${allowed && typeof current === 'boolean' ? '' : 'disabled'} /></label>`);
       } else if (type === 'select' && Array.isArray(input?.options) && input.options.length) {
-        const opts = input.options
-          .map((opt) => `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</option>`)
-          .join('');
+        const current = mapped[input?.property];
+        const hasCurrent = input.options.some((opt) => String(opt.value) === String(current));
+        const opts = `${hasCurrent ? '' : '<option value="" selected disabled>Select</option>'}${input.options
+          .map((opt) => `<option value="${escapeHtml(opt.value)}"${String(opt.value) === String(current) ? ' selected' : ''}>${escapeHtml(opt.label || opt.value)}</option>`)
+          .join('')}`;
         controls.push(
           `<select class="hn-select cmd-select" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input?.property || '')}" ${allowed ? '' : 'disabled'} aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" style="min-width: 160px;">${opts}</select>`,
         );
@@ -545,13 +577,21 @@ function renderSelected() {
         const max = Number(input?.range?.max ?? 100);
         const step = Number(input?.range?.step ?? 1);
         const prop = String(input?.property || '').trim();
-        const current = prop && mapped && mapped[prop] != null ? Number(mapped[prop]) : min;
-        const value = Number.isFinite(current) ? current : min;
+        const pairedProperty = String(input?.paired_property || '').trim();
+        const pairedValue = mapped[pairedProperty];
+        const reported = cmd === 'set_thinq_pair' && pairDraft ? pairDraft.values[prop] : mapped[prop];
+        const current = prop && reported != null ? Number(reported) : NaN;
+        const valid = [min, max, step, current].every(Number.isFinite) && min <= current && current <= max && step > 0 && (!pairedProperty || (typeof pairedValue === 'number' && Number.isFinite(pairedValue)));
+        const value = valid ? current : min;
         controls.push(
-          `<div class="lgw-slider" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${iconHtml(commandToIconName(cmd), 'hn-icon hn-icon--sm')}<input class="cmd-range" type="range" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(value)}" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(prop)}" ${allowed ? '' : 'disabled'} /></div>`,
+          `<label class="lgw-slider" title="${escapeHtml(label)}"><span class="lgw-slider__label">${escapeHtml(label)}</span><input class="cmd-range" type="range" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(value)}" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(prop)}" data-original-value="${escapeHtml(mapped[prop])}" data-paired-prop="${escapeHtml(pairedProperty)}" data-paired-value="${escapeHtml(pairedValue)}" ${allowed && valid && (cmd !== 'set_thinq_pair' || (pairValid && !pendingPairDevices.has(id))) ? '' : 'disabled'} /><output>${escapeHtml(valid ? current : 'Unknown')}</output></label>`,
         );
       }
     });
+
+    if (pairInputs.length) {
+      controls.push(`<button class="hn-btn cmd-pair-apply" type="button" data-device-id="${escapeHtml(id)}" ${commandAllowed && pairValid && !pendingPairDevices.has(id) ? '' : 'disabled'}>Apply</button>`);
+    }
 
     controlsEl.innerHTML = controls.length ? controls.join('') : '<span class="hn-muted hn-small">No controls exposed for this device.</span>';
     attachControlHandlers();
@@ -597,6 +637,11 @@ function renderSelected() {
         chips.push(`<span class="hn-chip hn-small ${mapped.muted ? 'hn-chip--err' : 'hn-chip--ok'}">${iconHtml(mapped.muted ? 'mute' : 'volume')}${mapped.muted ? 'muted' : 'unmuted'}</span>`);
       }
     }
+
+    Object.entries(mapped).forEach(([key, value]) => {
+      if (!key.includes('.') || value == null || typeof value === 'object') return;
+      chips.push(`<span class="hn-chip hn-small">${escapeHtml(key)}: ${escapeHtml(String(value))}</span>`);
+    });
 
     stateValuesEl.innerHTML = chips.join('') || '<span class="hn-muted hn-small">No state values.</span>';
   }
@@ -694,6 +739,30 @@ function attachControlHandlers() {
     });
   });
 
+  controlsEl.querySelectorAll('.cmd-toggle').forEach((toggle) => {
+    toggle.addEventListener('change', async () => {
+      const deviceId = String(toggle.getAttribute('data-device-id') || '');
+      const command = String(toggle.getAttribute('data-command') || '');
+      const prop = String(toggle.getAttribute('data-prop') || '');
+      const value = toggle.checked;
+      if (!prop || toggle.disabled) return;
+      toggle.disabled = true;
+      try {
+        setStatus(`Sending ${command}…`, null);
+        beginCommandPending(deviceId);
+        await sendCommand(deviceId, command, { [prop]: value });
+        scheduleSnapshotPoll(250);
+        setStatus('Command queued. Updating…', true);
+      } catch (err) {
+        cancelCommandPendingAfterFailure();
+        setStatus(err.message || 'Command failed.', false);
+        renderSelected();
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  });
+
   controlsEl.querySelectorAll('.cmd-select').forEach((select) => {
     select.addEventListener('change', async () => {
       const deviceId = String(select.getAttribute('data-device-id') || '');
@@ -716,14 +785,29 @@ function attachControlHandlers() {
   });
 
   controlsEl.querySelectorAll('.cmd-range').forEach((slider) => {
+    slider.addEventListener('input', () => {
+      const output = slider.parentElement?.querySelector('output');
+      if (output) output.textContent = slider.value;
+      if (slider.getAttribute('data-command') !== 'set_thinq_pair') return;
+      const deviceId = String(slider.getAttribute('data-device-id') || '');
+      const pair = Array.from(controlsEl.querySelectorAll('.cmd-range')).filter((item) => item.getAttribute('data-command') === 'set_thinq_pair');
+      if (pair.length !== 2 || pair.some((item) => item.disabled || item.value === '' || !Number.isFinite(Number(item.value)) || item.getAttribute('data-original-value') === '')) return;
+      pairDrafts.set(deviceId, {
+        baseline: Object.fromEntries(pair.map((item) => [item.getAttribute('data-prop'), Number(item.getAttribute('data-original-value'))])),
+        values: Object.fromEntries(pair.map((item) => [item.getAttribute('data-prop'), Number(item.value)])),
+      });
+    });
     slider.addEventListener('change', async () => {
       const deviceId = String(slider.getAttribute('data-device-id') || '');
       const command = String(slider.getAttribute('data-command') || '');
+      if (command === 'set_thinq_pair') return;
       const prop = String(slider.getAttribute('data-prop') || '');
       const raw = String(slider.value || '');
       const n = Number(raw);
       const value = Number.isFinite(n) ? n : raw;
-      const args = prop ? { [prop]: value } : { value };
+      const pairedProp = String(slider.getAttribute('data-paired-prop') || '');
+      const args = rangeCommandArgs(prop, value, pairedProp, slider.getAttribute('data-paired-value') || '');
+      if (!args || (command === 'set_thinq_pair' && !pairedProp)) return;
       try {
         setStatus(`Sending ${command}…`, null);
         beginCommandPending(deviceId);
@@ -734,6 +818,39 @@ function attachControlHandlers() {
         cancelCommandPendingAfterFailure();
         setStatus(err.message || 'Command failed.', false);
         renderSelected();
+      }
+    });
+  });
+
+  controlsEl.querySelectorAll('.cmd-pair-apply').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const deviceId = String(button.getAttribute('data-device-id') || '');
+      if (button.disabled || pendingPairDevices.has(deviceId)) return;
+      const sliders = Array.from(controlsEl.querySelectorAll('.cmd-range')).filter((slider) => slider.getAttribute('data-command') === 'set_thinq_pair');
+      if (sliders.length !== 2 || sliders.some((slider) => slider.disabled || slider.validity?.valid === false)) return;
+      const [first, second] = sliders;
+      const firstProp = String(first.getAttribute('data-prop') || '');
+      const secondProp = String(second.getAttribute('data-prop') || '');
+      if (!firstProp || !secondProp || firstProp === secondProp || first.getAttribute('data-paired-prop') !== secondProp || second.getAttribute('data-paired-prop') !== firstProp) return;
+      const args = first.value === '' ? null : rangeCommandArgs(firstProp, Number(first.value), secondProp, second.value);
+      if (!args) return;
+      pendingPairDevices.add(deviceId);
+      button.disabled = true;
+      sliders.forEach((slider) => { slider.disabled = true; });
+      try {
+        setStatus('Sending settings…', null);
+        beginCommandPending(deviceId);
+        await sendCommand(deviceId, 'set_thinq_pair', args);
+        pairDrafts.delete(deviceId);
+        scheduleSnapshotPoll(250);
+        setStatus('Command queued. Updating…', true);
+      } catch (err) {
+        cancelCommandPendingAfterFailure();
+        setStatus(err.message || 'Command failed.', false);
+        pendingPairDevices.delete(deviceId);
+        renderSelected();
+      } finally {
+        pendingPairDevices.delete(deviceId);
       }
     });
   });

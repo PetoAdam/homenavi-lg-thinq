@@ -82,15 +82,38 @@ const DEFAULTS = {
   realtimeReconnectSec: 30,
 };
 
-const FALLBACK_COUNTRIES = [
-  { code: 'HU', name: 'Hungary' },
-  { code: 'GB', name: 'United Kingdom' },
-  { code: 'US', name: 'United States' },
-  { code: 'KR', name: 'Korea' },
-  { code: 'DE', name: 'Germany' },
-];
+const COUNTRY_REGIONS = {
+  kr: new Set('AU BD CN HK ID IN JP KH KR LA LK MM MY NP NZ PH SG TH TW VN'.split(' ')),
+  us: new Set('AG AR AW BB BO BR BS BZ CA CL CO CR CU DM DO EC GD GT GY HN HT JM KN LC MX NI PA PE PR PY SR SV TT US UY VC VE'.split(' ')),
+  eu: new Set('AE AF AL AM AO AT AZ BA BE BF BG BH BJ BY CD CF CG CH CI CM CV CY CZ DE DJ DK DZ EE EG ES ET FI FR GA GB GE GH GM GN GQ GR HR HU IE IL IQ IR IS IT JO KE KG KW KZ LB LR LT LU LV LY MA MD ME MK ML MR MT MU MW NE NG NL NO OM PK PL PS PT QA RO RS RU RW SA SD SE SI SK SL SN SO ST SY TD TG TN TR TZ UA UG UZ XK YE ZA ZM'.split(' ')),
+};
+
+function localeCountry() {
+  try {
+    return new Intl.Locale(navigator.language || '').region || '';
+  } catch {
+    return '';
+  }
+}
+
+function regionForCountry(country) {
+  return Object.keys(COUNTRY_REGIONS).find((region) => COUNTRY_REGIONS[region].has(country)) || '';
+}
+
+function sdkFallbackCountries() {
+  let names;
+  try {
+    names = new Intl.DisplayNames([navigator.language || 'en'], { type: 'region' });
+  } catch {
+    names = null;
+  }
+  return Object.values(COUNTRY_REGIONS).flatMap((countries) => Array.from(countries, (code) => ({ code, name: names?.of(code) || code })))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
 
 function detectRegionWithoutGps() {
+  const countryRegion = regionForCountry(localeCountry());
+  if (countryRegion) return countryRegion;
   const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '').toLowerCase();
   const lang = (navigator.language || '').toLowerCase();
   if (tz.includes('asia/seoul') || lang.startsWith('ko')) return 'kr';
@@ -100,12 +123,9 @@ function detectRegionWithoutGps() {
 }
 
 function detectCountryWithoutGps(region) {
-  const lang = (navigator.language || '').trim();
-  const pieces = lang.split('-');
-  if (pieces.length > 1 && pieces[1]) {
-    const cc = pieces[1].toUpperCase();
-    if (/^[A-Z]{2}$/.test(cc)) return cc;
-  }
+  const country = localeCountry();
+  const selectedRegion = region === 'global' ? 'us' : region;
+  if (country && regionForCountry(country) === selectedRegion) return country;
   return (REGION_DEFAULTS[region] || REGION_DEFAULTS[DEFAULTS.region]).country;
 }
 
@@ -132,7 +152,7 @@ function populateCountryDropdown(countries) {
     }))
     .filter((item) => /^[A-Z]{2}$/.test(item.code));
 
-  const source = normalized.length ? normalized : FALLBACK_COUNTRIES;
+  const source = normalized.length ? normalized : sdkFallbackCountries();
   elements.country.innerHTML = '';
   source.forEach((item) => {
     const option = document.createElement('option');
@@ -152,7 +172,7 @@ async function loadCountryDropdown() {
     const data = await api('/api/admin/countries', { method: 'GET' });
     populateCountryDropdown(data?.countries || []);
   } catch {
-    populateCountryDropdown(FALLBACK_COUNTRIES);
+    populateCountryDropdown(sdkFallbackCountries());
   }
 }
 
@@ -260,7 +280,7 @@ function setWsStatus(message, stateClass) {
 }
 
 function escapeHtml(value) {
-  return String(value || '')
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -328,11 +348,21 @@ function hasPowerCapability(device) {
     const inputId = String(input?.id || '').toLowerCase();
     const prop = String(input?.property || '').toLowerCase();
     return inputId === 'set_power' || inputId === 'power' || prop === 'power';
-  }) || normalizePower(device) !== 'unknown';
+  });
 }
 
 function canSendCommands(device) {
   return Boolean(device?.online);
+}
+
+function rangeCommandArgs(property, value, pairedProperty, pairedValue) {
+  if (!property || !Number.isFinite(value)) return null;
+  const args = { [property]: value };
+  if (pairedProperty) {
+    if (pairedValue === '' || !Number.isFinite(Number(pairedValue))) return null;
+    args[pairedProperty] = Number(pairedValue);
+  }
+  return args;
 }
 
 function formatLastSeen(device) {
@@ -442,6 +472,9 @@ function filterAndSortEntries() {
   return filtered;
 }
 
+const pendingPairDevices = new Set();
+const pairDrafts = new Map();
+
 function buildDeviceHTML(id, device) {
   const mappedState = device?.mapped_state || {};
   const online = Boolean(device?.online);
@@ -453,10 +486,23 @@ function buildDeviceHTML(id, device) {
   const chips = [
     `<span class="hn-chip ${online ? 'hn-chip--ok' : 'hn-chip--err'}">${window.hnIcons?.icon ? window.hnIcons.icon(online ? 'wifi' : 'wifiOff', 'hn-icon') : ''}${online ? 'online' : 'offline'}</span>`,
     `<span class="hn-chip">${window.hnIcons?.icon ? window.hnIcons.icon('power', 'hn-icon') : ''}power: ${escapeHtml(power)}</span>`,
-    `<span class="hn-chip ${(device?.mapped_state?.remote_control_enabled === false) ? 'hn-chip--err' : 'hn-chip--ok'}">${window.hnIcons?.icon ? window.hnIcons.icon((device?.mapped_state?.remote_control_enabled === false) ? 'lock' : 'unlock', 'hn-icon') : ''}${device?.mapped_state?.remote_control_enabled === false ? 'remote state reports locked' : 'remote ready'}</span>`,
   ];
+  if (typeof mappedState.remote_control_enabled === 'boolean') {
+    chips.push(`<span class="hn-chip ${mappedState.remote_control_enabled ? 'hn-chip--ok' : 'hn-chip--err'}">${mappedState.remote_control_enabled ? 'remote ready' : 'remote state reports locked'}</span>`);
+  }
 
   const commandControls = [];
+  const pairInputs = inputs.filter((input) => input?.id === 'set_thinq_pair' && input?.type === 'range');
+  const pairValid = pairInputs.length === 2 && pairInputs[0].property === pairInputs[1].paired_property && pairInputs[1].property === pairInputs[0].paired_property && pairInputs.every((input) => {
+    const { min, max, step } = input.range || {};
+    const current = mappedState[input.property];
+    return [min, max, step, current].every((value) => typeof value === 'number' && Number.isFinite(value)) && min <= current && current <= max && step > 0;
+  });
+  let pairDraft = pairDrafts.get(id);
+  if (pairDraft && (!pairValid || pairInputs.some((input) => pairDraft.baseline[input.property] !== mappedState[input.property] || !Number.isFinite(pairDraft.values[input.property]) || pairDraft.values[input.property] < input.range.min || pairDraft.values[input.property] > input.range.max))) {
+    pairDrafts.delete(id);
+    pairDraft = null;
+  }
 
   if (hasPowerCapability(device)) {
     const checked = power === 'on' ? 'checked' : '';
@@ -468,11 +514,27 @@ function buildDeviceHTML(id, device) {
     if (!cmd || cmd === 'set_power' || cmd === 'power') return;
     if (String(input?.type || '').toLowerCase() === 'button') {
       commandControls.push(`<button class="hn-btn cmd-btn" type="button" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" ${actionAllowed ? '' : 'disabled'}>${escapeHtml(input?.label || cmd)}</button>`);
+    } else if (String(input?.type || '').toLowerCase() === 'toggle') {
+      const current = mappedState[input?.property];
+      commandControls.push(`<label>${escapeHtml(input?.label || cmd)} <input class="cmd-toggle" type="checkbox" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input?.property || '')}" ${current === true ? 'checked' : ''} ${actionAllowed && typeof current === 'boolean' ? '' : 'disabled'} /></label>`);
     } else if (String(input?.type || '').toLowerCase() === 'select' && Array.isArray(input?.options)) {
-      const options = input.options.map((opt) => `<option value="${opt.value}">${opt.label || opt.value}</option>`).join('');
-      commandControls.push(`<select class="hn-select cmd-select" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input?.property || '')}" ${actionAllowed ? '' : 'disabled'}>${options}</select>`);
+      const current = mappedState[input?.property];
+      const hasCurrent = input.options.some((opt) => String(opt.value) === String(current));
+      const options = `${hasCurrent ? '' : '<option value="" selected disabled>Select</option>'}${input.options.map((opt) => `<option value="${escapeHtml(opt.value)}"${String(opt.value) === String(current) ? ' selected' : ''}>${escapeHtml(opt.label || opt.value)}</option>`).join('')}`;
+      commandControls.push(`<label>${escapeHtml(input?.label || cmd)} <select class="hn-select cmd-select" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input?.property || '')}" ${actionAllowed ? '' : 'disabled'}>${options}</select></label>`);
+    } else if (String(input?.type || '').toLowerCase() === 'range') {
+      const { min, max, step } = input.range || {};
+      const current = cmd === 'set_thinq_pair' && pairDraft ? pairDraft.values[input?.property] : mappedState[input?.property];
+      const pairedProperty = input.paired_property || '';
+      const pairedValue = mappedState[pairedProperty];
+      const valid = [min, max, step, current].every((value) => typeof value === 'number' && Number.isFinite(value)) && min <= current && current <= max && step > 0 && (!pairedProperty || (typeof pairedValue === 'number' && Number.isFinite(pairedValue)));
+      commandControls.push(`<label>${escapeHtml(input.label || cmd)} <input class="cmd-range" type="range" min="${escapeHtml(min)}" max="${escapeHtml(max)}" step="${escapeHtml(step)}" value="${escapeHtml(valid ? current : min)}" data-device-id="${escapeHtml(id)}" data-command="${escapeHtml(cmd)}" data-prop="${escapeHtml(input.property || '')}" data-original-value="${escapeHtml(mappedState[input.property])}" data-paired-prop="${escapeHtml(pairedProperty)}" data-paired-value="${escapeHtml(pairedValue)}" ${actionAllowed && valid && (cmd !== 'set_thinq_pair' || (pairValid && !pendingPairDevices.has(id))) ? '' : 'disabled'} /><output>${escapeHtml(valid ? current : 'Unknown')}</output></label>`);
     }
   });
+
+  if (pairInputs.length) {
+    commandControls.push(`<button class="hn-btn cmd-pair-apply" type="button" data-device-id="${escapeHtml(id)}" ${actionAllowed && pairValid && !pendingPairDevices.has(id) ? '' : 'disabled'}>Apply</button>`);
+  }
 
   const name = device?.name || id;
   const lastSeen = formatLastSeen(device);
@@ -529,6 +591,27 @@ function attachDeviceActionHandlers() {
     });
   });
 
+  elements.deviceList.querySelectorAll('.cmd-toggle').forEach((toggle) => {
+    toggle.addEventListener('change', async () => {
+      const deviceId = String(toggle.getAttribute('data-device-id') || '');
+      const command = String(toggle.getAttribute('data-command') || '');
+      const prop = String(toggle.getAttribute('data-prop') || '');
+      const value = toggle.checked;
+      if (!prop || toggle.disabled) return;
+      toggle.disabled = true;
+      try {
+        await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args: { [prop]: value } }) });
+        scheduleCommandRefresh();
+        setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}`, true);
+      } catch (err) {
+        toggle.checked = !value;
+        setStatus(`Command failed: ${err.message}`, false);
+      } finally {
+        toggle.disabled = false;
+      }
+    });
+  });
+
   elements.deviceList.querySelectorAll('.cmd-select').forEach((select) => {
     select.addEventListener('change', async () => {
       const deviceId = String(select.getAttribute('data-device-id') || '');
@@ -542,6 +625,70 @@ function attachDeviceActionHandlers() {
         setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}=${value}`, true);
       } catch (err) {
         setStatus(`Command failed: ${err.message}`, false);
+      }
+    });
+  });
+
+  elements.deviceList.querySelectorAll('.cmd-range').forEach((slider) => {
+    slider.addEventListener('input', () => {
+      const output = slider.parentElement?.querySelector('output');
+      if (output) output.textContent = slider.value;
+      if (slider.getAttribute('data-command') !== 'set_thinq_pair') return;
+      const deviceId = String(slider.getAttribute('data-device-id') || '');
+      const pair = Array.from(slider.closest('.hn-device')?.querySelectorAll('.cmd-range') || []).filter((item) => item.getAttribute('data-command') === 'set_thinq_pair');
+      if (pair.length !== 2 || pair.some((item) => item.disabled || item.value === '' || !Number.isFinite(Number(item.value)) || item.getAttribute('data-original-value') === '')) return;
+      pairDrafts.set(deviceId, {
+        baseline: Object.fromEntries(pair.map((item) => [item.getAttribute('data-prop'), Number(item.getAttribute('data-original-value'))])),
+        values: Object.fromEntries(pair.map((item) => [item.getAttribute('data-prop'), Number(item.value)])),
+      });
+    });
+    slider.addEventListener('change', async () => {
+      const deviceId = String(slider.getAttribute('data-device-id') || '');
+      const command = String(slider.getAttribute('data-command') || '');
+      if (command === 'set_thinq_pair') return;
+      const prop = String(slider.getAttribute('data-prop') || '');
+      const value = Number(slider.value);
+      const pairedProp = String(slider.getAttribute('data-paired-prop') || '');
+      const args = rangeCommandArgs(prop, value, pairedProp, slider.getAttribute('data-paired-value') || '');
+      if (!args || (command === 'set_thinq_pair' && !pairedProp)) return;
+      try {
+        await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command, args }) });
+        scheduleCommandRefresh();
+        setStatus(`Command sent: ${deviceLabel(deviceId)} ${command}=${value}`, true);
+      } catch (err) {
+        setStatus(`Command failed: ${err.message}`, false);
+      }
+    });
+  });
+
+  elements.deviceList.querySelectorAll('.cmd-pair-apply').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const deviceId = String(button.getAttribute('data-device-id') || '');
+      if (button.disabled || pendingPairDevices.has(deviceId)) return;
+      const sliders = Array.from(button.closest('.hn-device')?.querySelectorAll('.cmd-range') || []).filter((slider) => slider.getAttribute('data-command') === 'set_thinq_pair');
+      if (sliders.length !== 2 || sliders.some((slider) => slider.disabled || slider.validity?.valid === false)) return;
+      const [first, second] = sliders;
+      const firstProp = String(first.getAttribute('data-prop') || '');
+      const secondProp = String(second.getAttribute('data-prop') || '');
+      if (!firstProp || !secondProp || firstProp === secondProp || first.getAttribute('data-paired-prop') !== secondProp || second.getAttribute('data-paired-prop') !== firstProp) return;
+      const args = first.value === '' ? null : rangeCommandArgs(firstProp, Number(first.value), secondProp, second.value);
+      if (!args) return;
+      pendingPairDevices.add(deviceId);
+      button.disabled = true;
+      sliders.forEach((slider) => { slider.disabled = true; });
+      try {
+        await api('/api/admin/device-command', { method: 'POST', body: JSON.stringify({ device_id: deviceId, command: 'set_thinq_pair', args }) });
+        pairDrafts.delete(deviceId);
+        scheduleCommandRefresh();
+        setStatus(`Command sent: ${deviceLabel(deviceId)} set_thinq_pair`, true);
+      } catch (err) {
+        button.disabled = false;
+        sliders.forEach((slider) => { slider.disabled = false; });
+        pendingPairDevices.delete(deviceId);
+        renderDevices();
+        setStatus(`Command failed: ${err.message}`, false);
+      } finally {
+        pendingPairDevices.delete(deviceId);
       }
     });
   });

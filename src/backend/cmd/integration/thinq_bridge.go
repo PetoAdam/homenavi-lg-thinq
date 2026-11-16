@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -195,6 +196,7 @@ func (p *cloudThinQProvider) SendCommand(ctx context.Context, cfg setupConfig, d
 	logInfof("thinq send command device_id=%s command=%s", deviceID, cmd.Name)
 	p.applyHeaders(req, cfg)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-conditional-control", "true")
 	resp, err := p.client.Do(req)
 	if err != nil {
 		logWarnf("thinq send command request failed device_id=%s command=%s err=%v", deviceID, cmd.Name, err)
@@ -295,6 +297,8 @@ func thinQMessageID() string {
 	if _, err := rand.Read(buf); err != nil {
 		return strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
+	buf[6] = (buf[6] & 0x0f) | 0x40
+	buf[8] = (buf[8] & 0x3f) | 0x80
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
 
@@ -495,15 +499,318 @@ func mapThinQCapabilities(d thinqDevice) []map[string]any {
 		return enrichCapabilitiesWithStateProfile("tv", base, mapped, profile)
 	case "washer":
 		base := []map[string]any{
-			capability("switch", "Power", "actuator", "power", "string", true, true, true),
 			capability("appliance.washer.status", "Washer Status", "sensor", "run_state", "string", true, false, true),
-			capability("appliance.washer.control", "Washer Control", "actuator", "cycle", "string", true, true, true),
+		}
+		_, available, _ := washerOperationProfile(d)
+		if available["POWER_ON"] && available["POWER_OFF"] {
+			base = append(base, capability("switch", "Power", "actuator", "power", "string", true, true, true))
+		}
+		if len(available) > 0 {
+			base = append(base, capability("appliance.washer.control", "Washer Control", "actuator", "operation_mode", "string", true, true, true))
 		}
 		return enrichCapabilitiesWithStateProfile("washer", base, mapped, profile)
 	default:
-		base := []map[string]any{capability("switch", "Power", "actuator", "power", "string", true, true, true)}
+		base := []map[string]any{}
+		for _, input := range applianceProfileInputs(d) {
+			property := asString(input["property"])
+			valueType := "string"
+			if input["type"] == "range" {
+				valueType = "number"
+			} else if input["type"] == "toggle" {
+				valueType = "boolean"
+			}
+			base = append(base, capability("thinq.control."+property, asString(input["label"]), "actuator", property, valueType, true, true, true))
+		}
 		return enrichCapabilitiesWithStateProfile(normalizeDeviceType(d.Type), base, mapped, profile)
 	}
+}
+
+func applianceProfileInputs(d thinqDevice) []map[string]any {
+	fields := map[string][]struct{ group, field, label string }{
+		"air_purifier":     {{"operation", "airPurifierOperationMode", "Power mode"}, {"airPurifierJobMode", "currentJobMode", "Air purifier mode"}},
+		"air_conditioner":  {{"operation", "airConOperationMode", "Power mode"}, {"airConJobMode", "currentJobMode", "Air conditioner mode"}},
+		"dish_washer":      {{"operation", "dishWasherOperationMode", "Dishwasher operation"}},
+		"dishwasher":       {{"operation", "dishWasherOperationMode", "Dishwasher operation"}},
+		"dryer":            {{"operation", "dryerOperationMode", "Dryer operation"}},
+		"styler":           {{"operation", "stylerOperationMode", "Styler operation"}},
+		"system_boiler":    {{"operation", "boilerOperationMode", "Boiler operation"}, {"boilerJobMode", "currentJobMode", "Boiler mode"}},
+		"dehumidifier":     {{"operation", "dehumidifierOperationMode", "Power mode"}},
+		"humidifier":       {{"operation", "humidifierOperationMode", "Power mode"}, {"humidifierJobMode", "currentJobMode", "Humidifier mode"}},
+		"ceiling_fan":      {{"operation", "ceilingfanOperationMode", "Power mode"}, {"airFlow", "windStrength", "Fan speed"}},
+		"air_purifier_fan": {{"operation", "airFanOperationMode", "Power mode"}, {"airFanJobMode", "currentJobMode", "Fan mode"}},
+		"robot_cleaner":    {{"operation", "cleanOperationMode", "Cleaner operation"}},
+		"water_heater":     {{"waterHeaterJobMode", "currentJobMode", "Water heater mode"}},
+		"ventilator":       {{"operation", "ventOperationMode", "Power mode"}, {"ventJobMode", "currentJobMode", "Ventilation mode"}},
+	}
+	profile, _ := d.State["profile"].(map[string]any)
+	properties, _ := profile["property"].(map[string]any)
+	inputs := []map[string]any{}
+	if kind := normalizeDeviceType(d.Type); kind == "refrigerator" || kind == "wine_cellar" {
+		inputs = append(inputs, refrigeratorTemperatureInputs(properties, d.State, kind)...)
+	}
+	if normalizeDeviceType(d.Type) == "refrigerator" {
+		group, _ := properties["powerSave"].(map[string]any)
+		definition, _ := group["powerSaveEnabled"].(map[string]any)
+		state, _ := d.State["powerSave"].(map[string]any)
+		_, stateOK := state["powerSaveEnabled"].(bool)
+		modes, _ := definition["mode"].([]any)
+		values, _ := definition["value"].(map[string]any)
+		allowed, _ := values["w"].([]any)
+		writable, allowsTrue, allowsFalse := false, false, false
+		for _, mode := range modes {
+			writable = writable || mode == "w"
+		}
+		for _, value := range allowed {
+			if boolean, ok := value.(bool); ok {
+				allowsTrue = allowsTrue || boolean
+				allowsFalse = allowsFalse || !boolean
+			}
+		}
+		if stateOK && writable && definition["type"] == "boolean" && allowsTrue && allowsFalse {
+			path := "powerSave.powerSaveEnabled"
+			inputs = append(inputs, map[string]any{"id": "set_thinq_property", "label": "Power saving", "type": "toggle", "capability_id": "thinq.control." + path, "property": path})
+		}
+	}
+	if normalizeDeviceType(d.Type) == "hood" || normalizeDeviceType(d.Type) == "microwave_oven" {
+		inputs = append(inputs, pairedVentilationInputs(properties, d.State)...)
+	}
+	switch normalizeDeviceType(d.Type) {
+	case "washtower", "washtower_washer", "washtower_dryer", "main_washcombo", "mini_washcombo":
+		inputs = append(inputs, combinedLaundryInputs(d)...)
+	}
+	for _, property := range fields[normalizeDeviceType(d.Type)] {
+		group, _ := properties[property.group].(map[string]any)
+		definition, _ := group[property.field].(map[string]any)
+		if definition["type"] != "enum" {
+			continue
+		}
+		writable := false
+		modes, _ := definition["mode"].([]any)
+		for _, mode := range modes {
+			if mode == "w" {
+				writable = true
+			}
+		}
+		values, _ := definition["value"].(map[string]any)
+		allowed, _ := values["w"].([]any)
+		options := []map[string]any{}
+		for _, value := range allowed {
+			if text, ok := value.(string); ok && text != "" {
+				if (normalizeDeviceType(d.Type) == "dish_washer" || normalizeDeviceType(d.Type) == "dishwasher") && text != "START" && text != "STOP" && text != "POWER_OFF" {
+					continue
+				}
+				options = append(options, map[string]any{"value": text, "label": strings.ReplaceAll(text, "_", " ")})
+			}
+		}
+		if writable && len(options) > 0 {
+			path := property.group + "." + property.field
+			inputs = append(inputs, map[string]any{"id": "set_thinq_property", "label": property.label, "type": "select", "capability_id": "thinq.control." + path, "property": path, "options": options})
+		}
+	}
+	return inputs
+}
+
+func combinedLaundryInputs(d thinqDevice) []map[string]any {
+	profile, _ := d.State["profile"].(map[string]any)
+	kind := normalizeDeviceType(d.Type)
+	inputs := []map[string]any{}
+	appendOperation := func(properties, state map[string]any, component, location, field string) {
+		operation, _ := properties["operation"].(map[string]any)
+		definition, _ := operation[field].(map[string]any)
+		modes, _ := definition["mode"].([]any)
+		writable := false
+		for _, mode := range modes {
+			writable = writable || mode == "w"
+		}
+		values, _ := definition["value"].(map[string]any)
+		allowed, _ := values["w"].([]any)
+		options := []map[string]any{}
+		for _, raw := range allowed {
+			value, ok := raw.(string)
+			if ok && (value == "START" || value == "STOP" || value == "POWER_OFF") {
+				options = append(options, map[string]any{"value": value, "label": strings.ReplaceAll(value, "_", " ")})
+			}
+		}
+		if !writable || definition["type"] != "enum" || len(options) == 0 || state == nil {
+			return
+		}
+		path := "operation." + field
+		if component != "" {
+			path = component + "." + path
+		} else if location != "" {
+			path = "location." + location + "." + path
+		}
+		remote, _ := state["remoteControlEnable"].(map[string]any)
+		enabled, _ := remote["remoteControlEnabled"].(bool)
+		inputs = append(inputs, map[string]any{"id": "set_thinq_laundry", "label": firstNonEmpty(component, location, "Dryer") + " operation", "type": "select", "property": path, "capability_id": "thinq.control." + path, "options": options, "component": component, "location": location, "operation_field": field, "remote_enabled": enabled})
+	}
+	switch kind {
+	case "washtower":
+		for _, component := range []string{"washer", "dryer"} {
+			componentProfile, _ := profile[component].(map[string]any)
+			properties, _ := componentProfile["property"].(map[string]any)
+			state, _ := d.State[component].(map[string]any)
+			appendOperation(properties, state, component, "", component+"OperationMode")
+		}
+	case "washtower_dryer":
+		properties, _ := profile["property"].(map[string]any)
+		appendOperation(properties, d.State, "", "", "dryerOperationMode")
+	case "washtower_washer", "main_washcombo", "mini_washcombo":
+		location := "MAIN"
+		if kind == "mini_washcombo" {
+			location = "MINI"
+		}
+		profiles, _ := profile["property"].([]any)
+		states, _ := d.State["response"].([]any)
+		var matchedProfile, matchedState map[string]any
+		profileCount, stateCount := 0, 0
+		for _, raw := range profiles {
+			entry, _ := raw.(map[string]any)
+			entryLocation, _ := entry["location"].(map[string]any)
+			if asString(entryLocation["locationName"]) == location {
+				matchedProfile, profileCount = entry, profileCount+1
+			}
+		}
+		for _, raw := range states {
+			entry, _ := raw.(map[string]any)
+			entryLocation, _ := entry["location"].(map[string]any)
+			if asString(entryLocation["locationName"]) == location {
+				matchedState, stateCount = entry, stateCount+1
+			}
+		}
+		if profileCount == 1 && stateCount == 1 {
+			appendOperation(matchedProfile, matchedState, "", location, "washerOperationMode")
+		}
+	}
+	return inputs
+}
+
+func pairedVentilationInputs(properties, state map[string]any) []map[string]any {
+	fields := []struct{ group, field, label string }{
+		{"lamp", "lampBrightness", "Lamp brightness"},
+		{"ventilation", "fanSpeed", "Fan speed"},
+	}
+	inputs := make([]map[string]any, 0, len(fields))
+	for index, field := range fields {
+		group, _ := properties[field.group].(map[string]any)
+		definition, _ := group[field.field].(map[string]any)
+		writable := false
+		switch mode := definition["mode"].(type) {
+		case string:
+			writable = mode == "w" || mode == "rw"
+		case []any:
+			for _, entry := range mode {
+				writable = writable || entry == "w"
+			}
+		}
+		values, _ := definition["value"].(map[string]any)
+		limits, _ := values["w"].(map[string]any)
+		min, minOK := rangeNumber(limits["min"])
+		max, maxOK := rangeNumber(limits["max"])
+		step, stepOK := rangeNumber(limits["step"])
+		excluded, excludedOK := limits["except"].([]any)
+		if limits["except"] == nil {
+			excludedOK = true
+		}
+		if definition["type"] != "range" || !writable || !minOK || !maxOK || !stepOK || !excludedOK || min > max || step <= 0 {
+			return nil
+		}
+		for _, entry := range excluded {
+			if _, ok := rangeNumber(entry); !ok {
+				return nil
+			}
+		}
+		currentGroup, _ := state[field.group].(map[string]any)
+		current, currentOK := rangeNumber(currentGroup[field.field])
+		if !currentOK || !rangeContains(current, min, max, step, excluded) {
+			return nil
+		}
+		path := field.group + "." + field.field
+		other := fields[1-index].group + "." + fields[1-index].field
+		inputs = append(inputs, map[string]any{"id": "set_thinq_pair", "label": field.label, "type": "range", "property": path, "paired_property": other, "capability_id": "thinq.control." + path, "range": map[string]any{"min": min, "max": max, "step": step, "except": excluded}})
+	}
+	return inputs
+}
+
+func rangeNumber(value any) (float64, bool) {
+	switch value.(type) {
+	case int, int64, float64, json.Number:
+	default:
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(asString(value), 64)
+	return number, err == nil && !math.IsNaN(number) && !math.IsInf(number, 0)
+}
+
+func rangeContains(number, min, max, step float64, excluded []any) bool {
+	if number < min || number > max || math.Abs((number-min)/step-math.Round((number-min)/step)) > 1e-9 {
+		return false
+	}
+	for _, value := range excluded {
+		invalid, ok := rangeNumber(value)
+		if !ok || number == invalid {
+			return false
+		}
+	}
+	return true
+}
+
+func refrigeratorTemperatureInputs(properties, state map[string]any, kind string) []map[string]any {
+	profiles, _ := properties["temperature"].([]any)
+	states, _ := state["temperature"].([]any)
+	inputs := []map[string]any{}
+	for _, item := range profiles {
+		profile, _ := item.(map[string]any)
+		location, unit := asString(profile["locationName"]), asString(profile["unit"])
+		validLocation := (kind == "refrigerator" && (location == "FRIDGE" || location == "FREEZER")) || (kind == "wine_cellar" && (location == "WINE_UPPER" || location == "WINE_LOWER"))
+		if !validLocation || (unit != "C" && unit != "F") {
+			continue
+		}
+		present := false
+		for _, raw := range states {
+			current, _ := raw.(map[string]any)
+			if asString(current["locationName"]) == location && asString(current["unit"]) == unit {
+				present = true
+				break
+			}
+		}
+		definition, _ := profile["targetTemperature"].(map[string]any)
+		modes, _ := definition["mode"].([]any)
+		writable := false
+		for _, mode := range modes {
+			if mode == "w" {
+				writable = true
+			}
+		}
+		values, _ := definition["value"].(map[string]any)
+		limits, _ := values["w"].(map[string]any)
+		min, minErr := strconv.ParseFloat(asString(limits["min"]), 64)
+		max, maxErr := strconv.ParseFloat(asString(limits["max"]), 64)
+		step, stepErr := strconv.ParseFloat(asString(limits["step"]), 64)
+		if !present || !writable || definition["type"] != "range" || minErr != nil || maxErr != nil || stepErr != nil || math.IsNaN(min) || math.IsNaN(max) || math.IsNaN(step) || math.IsInf(min, 0) || math.IsInf(max, 0) || math.IsInf(step, 0) || min > max || step <= 0 {
+			continue
+		}
+		path := "temperature." + location + "." + unit + ".targetTemperature"
+		excluded, _ := limits["except"].([]any)
+		if limits["except"] != nil && excluded == nil {
+			continue
+		}
+		validExclusions := true
+		normalizedExclusions := make([]any, 0, len(excluded))
+		for _, value := range excluded {
+			number, err := strconv.ParseFloat(asString(value), 64)
+			if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+				validExclusions = false
+				break
+			}
+			normalizedExclusions = append(normalizedExclusions, number)
+		}
+		if !validExclusions {
+			continue
+		}
+		inputs = append(inputs, map[string]any{"id": "set_thinq_property", "label": location + " temperature (" + unit + ")", "type": "range", "property": path, "capability_id": "thinq.control." + path, "range": map[string]any{"min": min, "max": max, "step": step, "except": normalizedExclusions}})
+	}
+	return inputs
 }
 
 func enrichCapabilitiesWithStateProfile(deviceType string, base []map[string]any, mappedState map[string]any, profile map[string]any) []map[string]any {
@@ -570,32 +877,33 @@ func washerOperationProfile(d thinqDevice) (string, map[string]bool, string) {
 		if !ok {
 			continue
 		}
+		location, _ := propMap["location"].(map[string]any)
+		if locationName == "" || asString(location["locationName"]) != locationName {
+			continue
+		}
 		operation, ok := propMap["operation"].(map[string]any)
 		if !ok {
 			continue
 		}
-		for key, raw := range operation {
-			if ctrlKey == "" {
-				ctrlKey = strings.TrimSpace(key)
-			}
-			def, _ := raw.(map[string]any)
-			values, _ := def["value"].(map[string]any)
-			for _, modeValues := range values {
-				items, ok := modeValues.([]any)
-				if !ok {
-					continue
-				}
-				for _, item := range items {
-					name := strings.ToUpper(strings.TrimSpace(asString(item)))
-					if name != "" {
-						available[name] = true
-					}
-				}
+		def, _ := operation["washerOperationMode"].(map[string]any)
+		modes, _ := def["mode"].([]any)
+		writable := false
+		for _, mode := range modes {
+			if mode == "w" {
+				writable = true
 			}
 		}
-	}
-	if locationName == "" {
-		locationName = "MAIN"
+		if !writable || def["type"] != "enum" {
+			continue
+		}
+		ctrlKey = "washerOperationMode"
+		values, _ := def["value"].(map[string]any)
+		items, _ := values["w"].([]any)
+		for _, item := range items {
+			if name, ok := item.(string); ok && name != "" {
+				available[name] = true
+			}
+		}
 	}
 	return ctrlKey, available, locationName
 }
@@ -616,7 +924,7 @@ func washerRemoteControlEnabled(d thinqDevice) bool {
 	if enabled, ok := state["remote_control_enabled"].(bool); ok {
 		return enabled
 	}
-	return true
+	return false
 }
 
 func mapThinQInputs(caps []map[string]any, d thinqDevice) []map[string]any {
@@ -629,6 +937,7 @@ func mapThinQInputs(caps []map[string]any, d thinqDevice) []map[string]any {
 		return false
 	}
 	inputs := make([]map[string]any, 0)
+	inputs = append(inputs, applianceProfileInputs(d)...)
 	if hasID("media.volume") {
 		inputs = append(inputs, map[string]any{
 			"id":            "set_volume",
@@ -706,6 +1015,14 @@ func mapThinQToHDPMetadata(d thinqDevice) map[string]any {
 	case strings.Contains(typeKey, "fridge") || strings.Contains(typeKey, "refrigerator"):
 		icon = "sensor"
 	}
+	capabilities := mapThinQCapabilities(d)
+	inputs := mapThinQInputs(capabilities, d)
+	for _, input := range inputs {
+		switch asString(input["id"]) {
+		case "set_thinq_property", "set_thinq_pair", "set_thinq_laundry":
+			input["id"] = asString(input["id"]) + "." + asString(input["property"])
+		}
+	}
 	return map[string]any{
 		"type":         "metadata",
 		"device_id":    sanitizeDeviceID(d.ID),
@@ -715,8 +1032,8 @@ func mapThinQToHDPMetadata(d thinqDevice) map[string]any {
 		"model":        strings.TrimSpace(d.Model),
 		"icon":         icon,
 		"online":       d.Online,
-		"capabilities": mapThinQCapabilities(d),
-		"inputs":       mapThinQInputs(mapThinQCapabilities(d), d),
+		"capabilities": capabilities,
+		"inputs":       inputs,
 	}
 }
 
@@ -813,7 +1130,51 @@ func mapThinQToHDPState(d thinqDevice) map[string]any {
 			out["last_seen"] = ts
 		}
 	default:
-		out["power"] = normalizePower(state["power"])
+		var addReading func(string, any)
+		addReading = func(prefix string, value any) {
+			switch typed := value.(type) {
+			case map[string]any:
+				for key, child := range typed {
+					if prefix == "" && (key == "profile" || key == "online") {
+						continue
+					}
+					name := key
+					if prefix != "" {
+						name = prefix + "." + key
+					}
+					addReading(name, child)
+				}
+			case []any:
+				for index, child := range typed {
+					addReading(prefix+"."+strconv.Itoa(index), child)
+				}
+			case string, bool, int, int64, float64, json.Number:
+				out[prefix] = typed
+			}
+		}
+		addReading("", state)
+		switch normalizeDeviceType(d.Type) {
+		case "washtower_washer", "main_washcombo", "mini_washcombo":
+			entries, _ := state["response"].([]any)
+			for _, raw := range entries {
+				entry, _ := raw.(map[string]any)
+				location, _ := entry["location"].(map[string]any)
+				name := asString(location["locationName"])
+				if name == "MAIN" || name == "MINI" {
+					addReading("location."+name, entry)
+				}
+			}
+		}
+		if kind := normalizeDeviceType(d.Type); kind == "refrigerator" || kind == "wine_cellar" {
+			temperatures, _ := state["temperature"].([]any)
+			for _, item := range temperatures {
+				entry, _ := item.(map[string]any)
+				location, unit := asString(entry["locationName"]), asString(entry["unit"])
+				if location != "" && unit != "" {
+					addReading("temperature."+location+"."+unit, entry)
+				}
+			}
+		}
 	}
 	return out
 }
@@ -907,6 +1268,149 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 	if args == nil {
 		args = map[string]any{}
 	}
+	if cmdName == "set_state" {
+		for _, input := range applianceProfileInputs(d) {
+			property := asString(input["property"])
+			if _, ok := args[property]; !ok {
+				continue
+			}
+			inputCommand := asString(input["id"])
+			if inputCommand == "set_thinq_pair" {
+				paired := asString(input["paired_property"])
+				parts := strings.SplitN(paired, ".", 2)
+				if len(parts) != 2 {
+					return thinqCommand{}, fmt.Errorf("invalid paired property")
+				}
+				values := cloneAnyMap(args)
+				if _, ok := values[paired]; !ok {
+					group, _ := d.State[parts[0]].(map[string]any)
+					values[paired] = group[parts[1]]
+				}
+				return translateHDPCommand(d, inputCommand, values)
+			}
+			return translateHDPCommand(d, inputCommand, args)
+		}
+	}
+	if cmdName == "set_thinq_laundry" {
+		if len(args) != 1 {
+			return thinqCommand{}, fmt.Errorf("exactly one laundry operation is required")
+		}
+		for _, input := range combinedLaundryInputs(d) {
+			property := asString(input["property"])
+			value, ok := args[property].(string)
+			if !ok {
+				continue
+			}
+			options, _ := input["options"].([]map[string]any)
+			for _, option := range options {
+				if option["value"] != value {
+					continue
+				}
+				if value == "START" && input["remote_enabled"] != true {
+					return thinqCommand{}, fmt.Errorf("remote control is not enabled")
+				}
+				payload := map[string]any{"operation": map[string]any{asString(input["operation_field"]): value}}
+				if location := asString(input["location"]); location != "" {
+					payload["location"] = map[string]any{"locationName": location}
+				}
+				if component := asString(input["component"]); component != "" {
+					payload = map[string]any{component: payload}
+				}
+				return thinqCommand{Name: cmdName, Params: payload}, nil
+			}
+		}
+		return thinqCommand{}, fmt.Errorf("unsupported laundry operation")
+	}
+	if cmdName == "set_thinq_pair" {
+		if (kind != "hood" && kind != "microwave_oven") || len(args) != 2 {
+			return thinqCommand{}, fmt.Errorf("two paired properties are required")
+		}
+		inputs := applianceProfileInputs(d)
+		if len(inputs) != 2 {
+			return thinqCommand{}, fmt.Errorf("paired controls are unavailable")
+		}
+		payload := map[string]any{}
+		for _, input := range inputs {
+			property := asString(input["property"])
+			number, ok := rangeNumber(args[property])
+			limits, _ := input["range"].(map[string]any)
+			min, _ := limits["min"].(float64)
+			max, _ := limits["max"].(float64)
+			step, _ := limits["step"].(float64)
+			excluded, _ := limits["except"].([]any)
+			if !ok || !rangeContains(number, min, max, step, excluded) {
+				return thinqCommand{}, fmt.Errorf("invalid value for %s", property)
+			}
+			parts := strings.SplitN(property, ".", 2)
+			payload[parts[0]] = map[string]any{parts[1]: number}
+		}
+		return thinqCommand{Name: cmdName, Params: payload}, nil
+	}
+	if cmdName == "set_thinq_property" {
+		if len(args) != 1 {
+			return thinqCommand{}, fmt.Errorf("exactly one property is required")
+		}
+		for _, input := range applianceProfileInputs(d) {
+			if input["id"] != cmdName {
+				continue
+			}
+			property := asString(input["property"])
+			if input["type"] == "toggle" {
+				value, ok := args[property].(bool)
+				if !ok {
+					continue
+				}
+				parts := strings.SplitN(property, ".", 2)
+				return thinqCommand{Name: cmdName, Params: map[string]any{parts[0]: map[string]any{parts[1]: value}}}, nil
+			}
+			if input["type"] == "range" {
+				raw, exists := args[property]
+				if !exists {
+					continue
+				}
+				switch raw.(type) {
+				case int, int64, float64, json.Number:
+				default:
+					return thinqCommand{}, fmt.Errorf("invalid value for %s", property)
+				}
+				number, err := strconv.ParseFloat(asString(raw), 64)
+				limits, _ := input["range"].(map[string]any)
+				min, _ := limits["min"].(float64)
+				max, _ := limits["max"].(float64)
+				step, _ := limits["step"].(float64)
+				if err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < min || number > max || math.Abs((number-min)/step-math.Round((number-min)/step)) > 1e-9 {
+					return thinqCommand{}, fmt.Errorf("invalid value for %s", property)
+				}
+				excluded, _ := limits["except"].([]any)
+				for _, value := range excluded {
+					invalid, err := strconv.ParseFloat(asString(value), 64)
+					if err != nil || number == invalid {
+						return thinqCommand{}, fmt.Errorf("invalid value for %s", property)
+					}
+				}
+				parts := strings.Split(property, ".")
+				return thinqCommand{Name: cmdName, Params: map[string]any{"temperature": map[string]any{"locationName": parts[1], "unit": parts[2], "targetTemperature": number}}}, nil
+			}
+			value, ok := args[property].(string)
+			if !ok {
+				continue
+			}
+			options, _ := input["options"].([]map[string]any)
+			for _, option := range options {
+				if option["value"] == value {
+					if (kind == "dryer" || kind == "styler" || kind == "dish_washer" || kind == "dishwasher") && value == "START" {
+						remote, _ := d.State["remoteControlEnable"].(map[string]any)
+						if enabled, ok := remote["remoteControlEnabled"].(bool); !ok || !enabled {
+							return thinqCommand{}, fmt.Errorf("remote control is not enabled")
+						}
+					}
+					parts := strings.SplitN(property, ".", 2)
+					return thinqCommand{Name: cmdName, Params: map[string]any{parts[0]: map[string]any{parts[1]: value}}}, nil
+				}
+			}
+		}
+		return thinqCommand{}, fmt.Errorf("unsupported property or value")
+	}
 	switch kind {
 	case "tv":
 		switch {
@@ -923,7 +1427,6 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 		}
 	case "washer":
 		ctrlKey, available, locationName := washerOperationProfile(d)
-		ctrlKey = firstNonEmpty(strings.TrimSpace(ctrlKey), "washerOperationMode")
 		remoteEnabled := washerRemoteControlEnabled(d)
 		mkPayload := func(mode string) map[string]any {
 			return map[string]any{
@@ -944,36 +1447,36 @@ func translateHDPCommand(d thinqDevice, command string, args map[string]any) (th
 			if !remoteEnabled {
 				return thinqCommand{}, fmt.Errorf("washer remote control is off; start is unavailable")
 			}
-			if len(available) > 0 && !available["START"] {
+			if !available["START"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
 			return mkCommand("start", "START"), nil
 		case cmdName == "stop" || asBool(args["stop"]):
-			if len(available) > 0 && !available["STOP"] {
+			if !available["STOP"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
 			return mkCommand("stop", "STOP"), nil
 		case cmdName == "set_power" || cmdName == "power" || hasKey(args, "power"):
 			target := normalizePower(args["power"])
 			if target == "on" {
-				if len(available) > 0 && !available["POWER_ON"] {
+				if !available["POWER_ON"] {
 					return thinqCommand{}, fmt.Errorf("unsupported washer command")
 				}
 				return mkCommand("set_power", "POWER_ON"), nil
 			}
-			if len(available) > 0 && !available["POWER_OFF"] {
+			if !available["POWER_OFF"] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
 			return mkCommand("set_power", "POWER_OFF"), nil
 		case cmdName == "set_operation_mode" || hasKey(args, "operation_mode"):
-			if !remoteEnabled {
-				return thinqCommand{}, fmt.Errorf("washer remote control is off; program changes are unavailable")
-			}
 			mode := strings.ToUpper(strings.TrimSpace(asString(args["operation_mode"])))
 			if mode == "" {
 				return thinqCommand{}, fmt.Errorf("missing operation_mode")
 			}
-			if len(available) > 0 && !available[mode] {
+			if mode == "START" && !remoteEnabled {
+				return thinqCommand{}, fmt.Errorf("washer remote control is off; start is unavailable")
+			}
+			if !available[mode] {
 				return thinqCommand{}, fmt.Errorf("unsupported washer command")
 			}
 			return mkCommand("set_operation_mode", mode), nil
@@ -1003,6 +1506,15 @@ func normalizeDeviceType(v string) string {
 	raw = strings.ReplaceAll(raw, "-", "_")
 	raw = strings.ReplaceAll(raw, ".", "_")
 	raw = strings.TrimPrefix(raw, "device_")
+	switch raw {
+	case "washcombo_main":
+		return "main_washcombo"
+	case "washcombo_mini":
+		return "mini_washcombo"
+	}
+	if strings.Contains(raw, "dish_washer") || strings.Contains(raw, "dishwasher") || strings.Contains(raw, "washtower") || strings.Contains(raw, "wash_tower") || strings.Contains(raw, "washcombo") || strings.Contains(raw, "wash_combo") {
+		return raw
+	}
 	if strings.Contains(raw, "washer") {
 		return "washer"
 	}

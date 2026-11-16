@@ -83,18 +83,15 @@ After installation via Homenavi admin marketplace, open the installed integratio
 
 ## Runtime behavior (default)
 
-- Device updates are primarily event-driven through MQTT/WS paths.
-- REST sync is not triggered automatically by realtime events or device commands.
-- Backend cloud sync runs periodically using `sync_interval_sec` (default: 180 seconds).
-- `POST /api/admin/sync-now` remains available as an on-demand fallback.
 
-## Security
+The integration exposes scalar readings from appliance states, including nested and array entries. Washer and combined laundry commands require a matching writable profile and location; starting also requires the reported remote-control setting. Supported enum controls for air conditioners, dishwashers, purifiers, dryers, stylers, boilers, humidifiers, dehumidifiers, fans, ventilators, robot cleaners and water heaters are derived from writable values in the device profile. Refrigerators and wine cellars can expose profile-validated compartment temperature controls when the matching location and unit are reported. Refrigerators can also expose power saving when the profile permits both boolean values and the current value is known. Hoods and microwaves can expose paired lamp and ventilation controls when both ranges and current values are available. Legacy TV controls are also available.
+
+This is not complete command support for every LG device. Other device-specific commands remain unsupported; devices without a recognized safe control are read-only. Paired lamp and ventilation settings are submitted together with Apply. A change from another controller may not yet be reflected in the displayed state; the LG API does not provide a compare-and-swap guarantee. Availability depends on the model, state and LG API permissions. Tests use LG's published examples and mocks, not physical devices. See [the device support plan](device-support-plan.md) for remaining work.
 
 - JWT auth via `JWT_PUBLIC_KEY_PATH`.
 - CSP/headers hardened; no inline JS required.
-- Setup persistence uses restricted file mode (`0600`).
-
-## Setup diagnostics
+- `LG_THINQ_REALTIME_ENABLED` provides the default only when no realtime setting is saved. An explicit saved setting takes precedence.
+- Configure a unique, stable client ID for each installation, as recommended by the ThinQ Connect SDK; changing an existing ID can require re-registering realtime credentials.
 
 When PAT verification fails, the setup UI shows the LG error code and a safe remediation message. In particular, LG code `1314` means the account API-call quota is exhausted; wait for LG's quota window to reset and reduce or disable realtime retries before trying again. The UI distinguishes this from a Homenavi session-expiry error, unsupported country, and PAT permission failures.
 
@@ -105,3 +102,5 @@ go test ./...
 go build ./...
 go run ./cmd/validate-manifest
 ```
+
+The Go suite includes HTTP mock contract tests derived from [thinqconnect 1.0.14](https://github.com/thinq-connect/pythinqconnect/tree/1.0.14), including discovery, profile and state responses, UUIDv4 message IDs, conditional-control requests and error envelopes. The device fixtures come from the bundled LG OpenAPI examples; these tests do not execute the Python SDK or contact LG devices.
